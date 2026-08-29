@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 5s
+
+# STUB: each service needs a /metrics endpoint (e.g. via prom-client) before
+# these targets return real data. Placeholder job list matches the required
+# metrics: transaction throughput, failed-transaction rate, ledger invariant
+# violation count, API latency p95/p99.
+scrape_configs:
+  - job_name: "api-gateway"
+    static_configs:
+      - targets: ["api-gateway:3000"]
+
+  - job_name: "transaction-service"
+    static_configs:
+      - targets: ["transaction-service:3002"]
+
+  - job_name: "ledger-service"
+    static_configs:
+      - targets: ["ledger-service:3003"]
+
+  - job_name: "fx-service"
+    static_configs:
+      - targets: ["fx-service:3004"]
+
+  - job_name: "payroll-service"
+    static_configs:
+      - targets: ["payroll-service:3005"]
+
+  - job_name: "account-service"
+    static_configs:
+      - targets: ["account-service:3001"]
+
+  - job_name: "admin-service"
+    static_configs:
+      - targets: ["admin-service:3006"]

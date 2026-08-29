@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway: 'services/api-gateway/**'
+            account-service: 'services/account-service/**'
+            transaction-service: 'services/transaction-service/**'
+            ledger-service: 'services/ledger-service/**'
+            fx-service: 'services/fx-service/**'
+            payroll-service: 'services/payroll-service/**'
+            admin-service: 'services/admin-service/**'
+
+  test-and-build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        run: npm install
+
+      - name: Run unit tests
+        working-directory: services/${{ matrix.service }}
+        run: npm test
+
+      # Block merge if tests fail: the job simply fails above and GitHub's
+      # branch protection rule (configured on `main`) requires this check.
+
+      - name: Read service version
+        id: version
+        working-directory: services/${{ matrix.service }}
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image (build-only, no push in this stub)
+        working-directory: services/${{ matrix.service }}
+        run: docker build -t ${{ matrix.service }}:${{ steps.version.outputs.version }} .
+
+      # TODO before production: push to a registry, require a version bump
+      # check (compare package.json version on the PR branch vs main and
+      # fail if unchanged for a service whose files changed).
