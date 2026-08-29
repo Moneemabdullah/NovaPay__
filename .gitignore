@@ -1,0 +1,9 @@
+node_modules/
+*.log
+
+# Environment files (keep .env.example committed, ignore actual values)
+.env
+.env.*
+!.env.example
+docs
+

@@ -1,0 +1,53 @@
+### Health checks
+GET http://localhost:8080/health
+
+### Create a wallet
+POST http://localhost:8080/accounts/wallets
+Content-Type: application/json
+
+{ "userId": "11111111-1111-1111-1111-111111111111", "currency": "USD" }
+
+### Initiate a transaction (idempotent)
+POST http://localhost:8080/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-001
+
+{
+  "senderWalletId": "11111111-1111-1111-1111-111111111111",
+  "recipientWalletId": "22222222-2222-2222-2222-222222222222",
+  "amountCents": 10000,
+  "currency": "USD"
+}
+
+### Retry the SAME request (Scenario A) -> should replay, not double-debit
+POST http://localhost:8080/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-001
+
+{
+  "senderWalletId": "11111111-1111-1111-1111-111111111111",
+  "recipientWalletId": "22222222-2222-2222-2222-222222222222",
+  "amountCents": 10000,
+  "currency": "USD"
+}
+
+### Same key, DIFFERENT amount (Scenario E) -> should 422
+POST http://localhost:8080/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-001
+
+{
+  "senderWalletId": "11111111-1111-1111-1111-111111111111",
+  "recipientWalletId": "22222222-2222-2222-2222-222222222222",
+  "amountCents": 99999,
+  "currency": "USD"
+}
+
+### Issue an FX quote
+POST http://localhost:8080/fx/quote
+Content-Type: application/json
+
+{ "baseCurrency": "USD", "quoteCurrency": "BDT" }
+
+### Check ledger invariant (should always be delta: 0)
+GET http://localhost:8080/ledger/invariant-check
