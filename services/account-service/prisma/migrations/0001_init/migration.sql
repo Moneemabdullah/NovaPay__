@@ -1,0 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT NOT NULL UNIQUE, full_name_enc BYTEA NOT NULL, full_name_iv BYTEA NOT NULL, full_name_tag BYTEA NOT NULL, phone_enc BYTEA, phone_iv BYTEA, phone_tag BYTEA, dek_wrapped BYTEA NOT NULL, key_version TEXT NOT NULL DEFAULT 'v1', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE wallets (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), currency CHAR(3) NOT NULL, balance_cents BIGINT NOT NULL DEFAULT 0 CHECK(balance_cents >= 0), status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','frozen','closed')), version BIGINT NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(user_id,currency));
+CREATE INDEX idx_wallets_user_id ON wallets(user_id);
+CREATE TABLE wallet_balance_operations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), wallet_id UUID NOT NULL REFERENCES wallets(id), operation_key TEXT NOT NULL, delta_cents BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(wallet_id,operation_key));

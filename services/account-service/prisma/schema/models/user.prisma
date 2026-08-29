@@ -1,0 +1,16 @@
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  email       String   @unique
+  fullNameEnc Bytes    @map("full_name_enc")
+  fullNameIv  Bytes    @map("full_name_iv")
+  fullNameTag Bytes    @map("full_name_tag")
+  phoneEnc    Bytes?   @map("phone_enc")
+  phoneIv     Bytes?   @map("phone_iv")
+  phoneTag    Bytes?   @map("phone_tag")
+  dekWrapped  Bytes    @map("dek_wrapped")
+  keyVersion  String   @default("v1") @map("key_version")
+  createdAt   DateTime @default(now()) @map("created_at")
+  wallets     Wallet[]
+
+  @@map("users")
+}

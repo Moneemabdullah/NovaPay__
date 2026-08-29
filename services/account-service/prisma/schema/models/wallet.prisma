@@ -1,0 +1,15 @@
+model Wallet {
+  id           String                   @id @default(uuid()) @db.Uuid
+  userId       String                   @map("user_id") @db.Uuid
+  currency     String                   @db.Char(3)
+  balanceCents BigInt                   @default(0) @map("balance_cents")
+  status       String                   @default("active")
+  version      BigInt                   @default(0)
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  user         User                     @relation(fields: [userId], references: [id])
+  operations   WalletBalanceOperation[]
+
+  @@unique([userId, currency])
+  @@index([userId])
+  @@map("wallets")
+}

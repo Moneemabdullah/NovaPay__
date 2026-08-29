@@ -1,0 +1,11 @@
+model WalletBalanceOperation {
+  id           String   @id @default(uuid()) @db.Uuid
+  walletId     String   @map("wallet_id") @db.Uuid
+  operationKey String   @map("operation_key")
+  deltaCents   BigInt   @map("delta_cents")
+  createdAt    DateTime @default(now()) @map("created_at")
+  wallet       Wallet   @relation(fields: [walletId], references: [id])
+
+  @@unique([walletId, operationKey])
+  @@map("wallet_balance_operations")
+}
