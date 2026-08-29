@@ -1,0 +1,158 @@
+version: "3.9"
+
+# NOTE on "no shared databases between services": each service gets its own
+# logical Postgres database on one Postgres instance for local dev
+# convenience. In production each would be its own instance/cluster; the
+# important invariant is that no two services' code paths ever query the
+# same schema, and none of them see another service's tables.
+
+x-node-env: &node-env
+  NODE_ENV: development
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: novapay
+      POSTGRES_PASSWORD: novapay
+      POSTGRES_MULTIPLE_DATABASES: "account_db,transaction_db,ledger_db,fx_db,payroll_db,admin_db"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novapay"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      api-gateway:
+        condition: service_started
+
+  api-gateway:
+    build: ./services/api-gateway
+    environment:
+      <<: *node-env
+      PORT: 3000
+      ACCOUNT_SERVICE_URL: http://account-service:3001
+      TRANSACTION_SERVICE_URL: http://transaction-service:3002
+      LEDGER_SERVICE_URL: http://ledger-service:3003
+      FX_SERVICE_URL: http://fx-service:3004
+      PAYROLL_SERVICE_URL: http://payroll-service:3005
+      ADMIN_SERVICE_URL: http://admin-service:3006
+    depends_on:
+      - account-service
+      - transaction-service
+      - ledger-service
+      - fx-service
+      - payroll-service
+      - admin-service
+
+  account-service:
+    build: ./services/account-service
+    environment:
+      <<: *node-env
+      PORT: 3001
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/account_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  transaction-service:
+    build: ./services/transaction-service
+    environment:
+      <<: *node-env
+      PORT: 3002
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/transaction_db
+      ACCOUNT_SERVICE_URL: http://account-service:3001
+      LEDGER_SERVICE_URL: http://ledger-service:3003
+      FX_SERVICE_URL: http://fx-service:3004
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ledger-service:
+    build: ./services/ledger-service
+    environment:
+      <<: *node-env
+      PORT: 3003
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/ledger_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  fx-service:
+    build: ./services/fx-service
+    environment:
+      <<: *node-env
+      PORT: 3004
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/fx_db
+      FX_PROVIDER_DOWN: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  payroll-service:
+    build: ./services/payroll-service
+    environment:
+      <<: *node-env
+      PORT: 3005
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/payroll_db
+      REDIS_URL: redis://redis:6379
+      TRANSACTION_SERVICE_URL: http://transaction-service:3002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  admin-service:
+    build: ./services/admin-service
+    environment:
+      <<: *node-env
+      PORT: 3006
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/admin_db
+      LEDGER_SERVICE_URL: http://ledger-service:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- Checkpoint 3: Observability ---
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3007:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+
+volumes:
+  pgdata:
