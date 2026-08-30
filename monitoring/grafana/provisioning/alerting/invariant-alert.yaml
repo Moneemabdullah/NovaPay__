@@ -3,15 +3,16 @@ groups:
   - orgId: 1
     name: NovaPay Invariants
     folder: NovaPay
+    interval: 1m
     rules:
       - uid: novapay-ledger-invariant-violations
         title: Ledger invariant violations detected
-        for: 0s
         condition: B
+        for: 1m
         data:
           - refId: A
             datasourceUid: prometheus
-            queryType: ""
+            queryType: instant
             model:
               refId: A
               expr: sum(ledger_invariant_violations_total) > 0
@@ -23,7 +24,6 @@ groups:
           - refId: B
             datasourceUid: __expr__
             type: threshold
-            datatype: threshold
             model:
               refId: B
               type: threshold
@@ -39,8 +39,11 @@ groups:
                   reducer:
                     type: last
                   type: query
-        no_data_state: OK
-        exec_err_state: Error
+            relativeTimeRange:
+              from: 600
+              to: 0
+        noDataState: OK
+        execErrState: Error
         labels:
           severity: critical
         annotations:

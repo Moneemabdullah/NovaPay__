@@ -63,6 +63,7 @@ services:
 
   account-service:
     build: ./services/account-service
+    env_file: ./services/account-service/.env
     environment:
       <<: *node-env
       PORT: 3001
@@ -107,6 +108,7 @@ services:
 
   payroll-service:
     build: ./services/payroll-service
+    env_file: ./services/payroll-service/.env
     environment:
       <<: *node-env
       PORT: 3005
