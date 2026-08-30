@@ -1,4 +1,3 @@
-version: "3.9"
 
 # NOTE on "no shared databases between services": each service gets its own
 # logical Postgres database on one Postgres instance for local dev

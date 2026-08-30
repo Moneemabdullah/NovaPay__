@@ -6,6 +6,7 @@ import {
   createUser,
   createWallet,
   getWallet,
+  getWalletOperation,
   listWallets,
 } from "../services/wallet.service.js";
 
@@ -94,6 +95,20 @@ export async function walletRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const w = await getWallet(request.params.walletId);
       return w ?? fail(reply, 404, "WALLET_NOT_FOUND", "Wallet was not found");
+    },
+  );
+
+  app.get<{ Params: { walletId: string; operationKey: string } }>(
+    "/wallets/:walletId/operations/:operationKey",
+    async (request, reply) => {
+      const op = await getWalletOperation(
+        request.params.walletId,
+        request.params.operationKey,
+      );
+      return (
+        op ??
+        fail(reply, 404, "OPERATION_NOT_FOUND", "Operation was not found")
+      );
     },
   );
 

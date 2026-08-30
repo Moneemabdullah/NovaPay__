@@ -15,11 +15,17 @@ function encrypted(value: string, key: Buffer) {
 }
 
 export function envelope(fullName: string, phone?: string) {
-  const dek = crypto.randomBytes(32),
-    name = encrypted(fullName, dek),
-    phoneValue = phone ? encrypted(phone, dek) : undefined,
-    iv = crypto.randomBytes(12),
-    c = crypto.createCipheriv("aes-256-gcm", kek(), iv);
-  const wrapped = Buffer.concat([iv, c.getAuthTag(), c.update(dek), c.final()]);
+  const dek = crypto.randomBytes(32);
+  const name = encrypted(fullName, dek);
+  const phoneValue = phone ? encrypted(phone, dek) : undefined;
+
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", kek(), iv);
+
+  const encryptedDek = Buffer.concat([c.update(dek), c.final()]);
+  const authTag = c.getAuthTag();
+
+  const wrapped = Buffer.concat([iv, authTag, encryptedDek]);
+
   return { name, phone: phoneValue, wrapped };
 }

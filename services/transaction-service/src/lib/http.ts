@@ -31,6 +31,20 @@ export async function post(base: string, path: string, body: any, id?: string) {
   return d;
 }
 
+export async function get(base: string, path: string, id?: string) {
+  const r = await fetch(base + path, {
+    headers: { "x-request-id": id ?? crypto.randomUUID() },
+  });
+  if (r.status === 404) return null;
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok)
+    throw Object.assign(new Error(d.message ?? "Dependency failure"), {
+      status: r.status,
+      code: d.error,
+    });
+  return d;
+}
+
 export const cents = (amount: bigint, rate: string) =>
   Number((amount * BigInt(rate.replace(".", "").padEnd(9, "0"))) / 100000000n);
 

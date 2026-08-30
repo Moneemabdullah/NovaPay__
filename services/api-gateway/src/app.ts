@@ -21,12 +21,20 @@ export async function buildApp() {
   const app = Fastify({
     logger: { level: envVars.LOG_LEVEL },
   });
+
   await app.register(helmet);
   await requestIdPlugin(app);
   httpMetricsHooks(app);
   registerErrorHandler(app);
   await app.register(registerRoutes);
-  for (const [prefix, upstream] of Object.entries(routes))
-    await app.register(proxy, { upstream, prefix, rewritePrefix: "" });
+
+  for (const [prefix, upstream] of Object.entries(routes)) {
+    await app.register(proxy, {
+      upstream,
+      prefix,
+      rewritePrefix: prefix,
+    });
+  }
+
   return app;
 }

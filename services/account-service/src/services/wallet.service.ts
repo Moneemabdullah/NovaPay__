@@ -28,27 +28,64 @@ export async function createWallet(input: {
   currency: string;
   initialBalanceCents?: number;
 }) {
-  return prisma.wallet.create({
+  const wallet = await prisma.wallet.create({
     data: {
       userId: input.userId,
       currency: input.currency,
       balanceCents: BigInt(input.initialBalanceCents ?? 0),
     },
   });
+
+  return {
+    ...wallet,
+    balanceCents: wallet.balanceCents.toString(),
+  };
 }
 
 export async function listWallets(userId: string) {
-  return prisma.wallet.findMany({
+  const wallets = await prisma.wallet.findMany({
     where: { userId },
-    select: { id: true, currency: true, balanceCents: true, status: true },
+    select: {
+      id: true,
+      currency: true,
+      balanceCents: true,
+      status: true,
+    },
     orderBy: { currency: "asc" },
   });
+
+  return wallets.map((wallet) => ({
+    ...wallet,
+    balanceCents: wallet.balanceCents.toString(),
+  }));
 }
 
 export async function getWallet(walletId: string) {
-  return prisma.wallet.findUnique({
+  const wallet = await prisma.wallet.findUnique({
     where: { id: walletId },
-    select: { id: true, balanceCents: true, currency: true, status: true },
+    select: {
+      id: true,
+      balanceCents: true,
+      currency: true,
+      status: true,
+    },
+  });
+
+  if (!wallet) return null;
+
+  return {
+    ...wallet,
+    balanceCents: wallet.balanceCents.toString(),
+  };
+}
+
+export async function getWalletOperation(
+  walletId: string,
+  operationKey: string,
+) {
+  return prisma.walletBalanceOperation.findUnique({
+    where: { walletId_operationKey: { walletId, operationKey } },
+    select: { walletId: true, operationKey: true, deltaCents: true },
   });
 }
 
