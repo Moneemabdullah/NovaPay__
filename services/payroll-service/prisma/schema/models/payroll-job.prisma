@@ -1,0 +1,14 @@
+model PayrollJob {
+  id                String        @id @default(uuid()) @db.Uuid
+  employerAccountId String        @map("employer_account_id") @db.Uuid
+  totalItems        Int           @map("total_items")
+  processedItems    Int           @default(0) @map("processed_items")
+  failedItems       Int           @default(0) @map("failed_items")
+  checkpointIndex   Int           @default(0) @map("checkpoint_index")
+  status            String        @default("queued")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  items             PayrollItem[]
+
+  @@map("payroll_jobs")
+}

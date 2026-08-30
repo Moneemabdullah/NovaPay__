@@ -1,0 +1,15 @@
+model PayrollItem {
+  id                BigInt     @id @default(autoincrement())
+  jobId             String     @map("job_id") @db.Uuid
+  lineIndex         Int        @map("line_index")
+  recipientWalletId String     @map("recipient_wallet_id") @db.Uuid
+  amountCents       BigInt     @map("amount_cents")
+  idempotencyKey    String     @map("idempotency_key")
+  status            String     @default("pending")
+  transactionId     String?    @map("transaction_id") @db.Uuid
+  job               PayrollJob @relation(fields: [jobId], references: [id])
+
+  @@unique([jobId, lineIndex])
+  @@index([jobId, status])
+  @@map("payroll_items")
+}
