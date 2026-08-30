@@ -1,0 +1,9 @@
+model IncidentNote {
+  id            String   @id @default(uuid()) @db.Uuid
+  adminUser     String   @map("admin_user")
+  transactionId String?  @map("transaction_id") @db.Uuid
+  note          String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("incident_notes")
+}

@@ -1,0 +1,1 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE TABLE incident_notes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), admin_user TEXT NOT NULL, transaction_id UUID, note TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
