@@ -17,7 +17,7 @@ help:
 	@echo "  make generate   Run prisma generate in each DB service"
 	@echo "  make test       Run the vitest suite in every service"
 
-up: migrate
+up:
 	$(COMPOSE) up -d --build
 
 down:
