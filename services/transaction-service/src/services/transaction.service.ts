@@ -1,21 +1,18 @@
 import { Prisma, Transaction } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
+import { setContext } from "../lib/context.js";
 import { post, cents, sha, canonical } from "../lib/http.js";
 
-const account = envVars.ACCOUNT_SERVICE_URL;
-const ledger = envVars.LEDGER_SERVICE_URL;
-const fx = envVars.FX_SERVICE_URL;
-
 export async function execute(tx: Transaction, id?: string) {
-  const existing = await fetch(`${ledger}/batches/${tx.id}`).then((r) =>
-    r.ok ? r.json() : null,
-  );
+  const existing = await fetch(
+    `${envVars.LEDGER_SERVICE_URL}/batches/${tx.id}`,
+  ).then((r) => (r.ok ? r.json() : null));
   const destination = tx.destinationAmountCents ?? tx.amountCents;
   const currency = tx.destinationCurrency ?? tx.currency;
   if (!existing) {
     await post(
-      account,
+      envVars.ACCOUNT_SERVICE_URL,
       `/wallets/${tx.senderWalletId}/operations`,
       {
         operationKey: `${tx.id}:debit`,
@@ -69,10 +66,10 @@ export async function execute(tx: Transaction, id?: string) {
               currency: tx.currency,
             },
           ];
-      await post(ledger, "/batches", { transactionId: tx.id, entries }, id);
+      await post(envVars.LEDGER_SERVICE_URL, "/batches", { transactionId: tx.id, entries }, id);
     } catch (e) {
       await post(
-        account,
+        envVars.ACCOUNT_SERVICE_URL,
         `/wallets/${tx.senderWalletId}/operations`,
         {
           operationKey: `${tx.id}:reversal`,
@@ -84,7 +81,7 @@ export async function execute(tx: Transaction, id?: string) {
     }
   }
   await post(
-    account,
+    envVars.ACCOUNT_SERVICE_URL,
     `/wallets/${tx.recipientWalletId}/operations`,
     { operationKey: `${tx.id}:credit`, deltaCents: Number(destination) },
     id,
@@ -156,6 +153,7 @@ export async function initiate(
       });
       return x;
     });
+    setContext({ transactionId: tx.id });
   } catch (e: any) {
     if (e.code !== "P2002") throw e;
     const old = await prisma.idempotencyKey.findUnique({ where: { key } });
@@ -183,7 +181,7 @@ export async function initiate(
   if (international) {
     try {
       const quote = await post(
-        fx,
+        envVars.FX_SERVICE_URL,
         `/quote/${p.quoteId}/consume`,
         { transactionId: tx.id },
         q.headers["x-request-id"],
