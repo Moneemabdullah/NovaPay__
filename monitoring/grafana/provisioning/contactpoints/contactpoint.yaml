@@ -1,0 +1,14 @@
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: NovaPay Critical Alerts
+    receivers:
+      - uid: novapay-critical-webhook
+        type: webhook
+        disableResolveMessage: false
+        settings:
+          httpMethod: POST
+          # Stub receiver: point this at a real alert sink (PagerDuty, Slack
+          # webhook, Opsgenie, etc.). The alert *state* still fires and is
+          # visible in the Grafana alert list regardless of this target.
+          url: http://host.docker.internal:9095/nova-alerts

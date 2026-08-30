@@ -1,0 +1,11 @@
+groups:
+  - name: novapay-invariants
+    rules:
+      - alert: LedgerInvariantViolation
+        expr: sum(ledger_invariant_violations_total) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger invariant violation detected"
+          description: "The ledger invariant check found a non-zero per-currency delta across ledger entries."

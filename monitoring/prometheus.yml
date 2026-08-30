@@ -1,10 +1,9 @@
 global:
   scrape_interval: 5s
 
-# STUB: each service needs a /metrics endpoint (e.g. via prom-client) before
-# these targets return real data. Placeholder job list matches the required
-# metrics: transaction throughput, failed-transaction rate, ledger invariant
-# violation count, API latency p95/p99.
+rule_files:
+  - /etc/prometheus/prometheus-alerts.yml
+
 scrape_configs:
   - job_name: "api-gateway"
     static_configs:
