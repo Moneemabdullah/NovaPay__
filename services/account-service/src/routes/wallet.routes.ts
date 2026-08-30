@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { fail } from "../lib/fail.js";
+import { setContext } from "../lib/context.js";
 import {
   applyWalletOperation,
   createUser,
@@ -79,10 +80,13 @@ export async function walletRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { userId: string } }>(
     "/wallets/:userId",
-    async (request) => ({
-      userId: request.params.userId,
-      wallets: await listWallets(request.params.userId),
-    }),
+    async (request) => {
+      setContext({ userId: request.params.userId });
+      return {
+        userId: request.params.userId,
+        wallets: await listWallets(request.params.userId),
+      };
+    },
   );
 
   app.get<{ Params: { walletId: string } }>(

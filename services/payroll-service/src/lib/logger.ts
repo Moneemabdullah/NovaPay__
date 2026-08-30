@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import pino from "pino";
 import { envVars } from "../config/env.utils.js";
+import { getContext } from "./context.js";
 
 const isDev = envVars.NODE_ENV === "development";
 const logDir = path.join(process.cwd(), ".logger");
@@ -14,7 +15,7 @@ if (!fs.existsSync(logDir)) {
 
 const streams: pino.StreamEntry[] = [
   { level: "error", stream: pino.destination({ dest: errorLogPath, sync: false }) },
-  { level: "debug", stream: pino.destination({ dest: appLogPath, sync: false }) },
+  { level: envVars.LOG_LEVEL, stream: pino.destination({ dest: appLogPath, sync: false }) },
 ];
 
 if (isDev) {
@@ -31,18 +32,56 @@ if (isDev) {
   });
 }
 
-export const logger = pino(
-  { level: isDev ? "debug" : envVars.LOG_LEVEL },
-  pino.multistream(streams),
-);
+// Safety net: never let secret-shaped keys reach the log output. The KEK
+// (FIELD_ENCRYPTION_KEK) is the concrete case; crypto.service.ts must never
+// pass it to a logger either. Redaction is applied for any key listed here or
+// nested one level deep from the record root.
+export const REDACT_PATHS = [
+  "password",
+  "*.password",
+  "token",
+  "*.token",
+  "secret",
+  "*.secret",
+  "authorization",
+  "*.authorization",
+  "apiKey",
+  "*.apiKey",
+  "kek",
+  "*.kek",
+  "dek",
+  "dekWrapped",
+  "*.dekWrapped",
+  "FIELD_ENCRYPTION_KEK",
+  "*.FIELD_ENCRYPTION_KEK",
+];
+
+export function loggerOptions(): pino.LoggerOptions {
+  return {
+    level: isDev ? "debug" : envVars.LOG_LEVEL,
+    redact: { paths: REDACT_PATHS, censor: "[REDACTED]" },
+  };
+}
+
+export const logger = pino(loggerOptions(), pino.multistream(streams));
+
+const contextRecord = (moduleName: string) => {
+  const ctx = getContext();
+  return {
+    module: moduleName,
+    ...(ctx?.requestId ? { requestId: ctx.requestId } : {}),
+    ...(ctx?.userId ? { userId: ctx.userId } : {}),
+    ...(ctx?.transactionId ? { transactionId: ctx.transactionId } : {}),
+  };
+};
 
 export const createLogger = (moduleName: string) => ({
   debug: (msg: string, data?: unknown) =>
-    logger.debug({ module: moduleName, ...(data as object) }, msg),
+    logger.debug({ ...(data as object), ...contextRecord(moduleName) }, msg),
   info: (msg: string, data?: unknown) =>
-    logger.info({ module: moduleName, ...(data as object) }, msg),
+    logger.info({ ...(data as object), ...contextRecord(moduleName) }, msg),
   warn: (msg: string, data?: unknown) =>
-    logger.warn({ module: moduleName, ...(data as object) }, msg),
+    logger.warn({ ...(data as object), ...contextRecord(moduleName) }, msg),
   error: (msg: string, error?: unknown) =>
-    logger.error({ module: moduleName, error }, msg),
+    logger.error({ error, ...contextRecord(moduleName) }, msg),
 });

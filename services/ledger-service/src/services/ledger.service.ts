@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { type LedgerEntry, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { ledgerInvariantViolations } from "../lib/metrics.js";
 
 export type LedgerEntryInput = {
   accountId: string;
@@ -9,8 +10,6 @@ export type LedgerEntryInput = {
   currency: string;
   fxRate?: string;
 };
-
-export let violations = 0;
 
 type HashableEntry = {
   accountId: string;
@@ -116,7 +115,7 @@ export async function invariantCheck() {
     Prisma.sql`SELECT currency,COALESCE(SUM(CASE WHEN direction='debit' THEN amount_cents ELSE -amount_cents END),0) delta FROM ledger_entries GROUP BY currency`,
   );
   const ok = rows.every((x) => x.delta === 0n);
-  if (!ok) violations++;
+  if (!ok) ledgerInvariantViolations.inc();
   return {
     delta: rows.reduce((v, x) => v + Number(x.delta), 0),
     ok,

@@ -3,6 +3,7 @@ import proxy from "@fastify/http-proxy";
 import helmet from "@fastify/helmet";
 import { envVars } from "./config/env.utils.js";
 import { requestIdPlugin } from "./middlewares/request-id.js";
+import { httpMetricsHooks } from "./lib/metrics.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 
@@ -21,7 +22,8 @@ export async function buildApp() {
     logger: { level: envVars.LOG_LEVEL },
   });
   await app.register(helmet);
-  await app.register(requestIdPlugin);
+  await requestIdPlugin(app);
+  httpMetricsHooks(app);
   registerErrorHandler(app);
   await app.register(registerRoutes);
   for (const [prefix, upstream] of Object.entries(routes))

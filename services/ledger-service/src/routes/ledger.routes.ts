@@ -7,16 +7,9 @@ import {
   getBatch,
   invariantCheck,
   validateBatch,
-  violations,
 } from "../services/ledger.service.js";
 
 export async function ledgerRoutes(app: FastifyInstance) {
-  app.get("/metrics", async (_req, reply) =>
-    reply
-      .type("text/plain")
-      .send(`ledger_invariant_violations_total ${violations}\n`),
-  );
-
   app.post<{ Body: { transactionId?: string; entries?: LedgerEntryInput[] } }>(
     "/batches",
     async (request, reply) => {

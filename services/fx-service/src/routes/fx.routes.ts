@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { envVars } from "../config/env.utils.js";
 import { fail } from "../lib/fail.js";
+import { fxProviderFailures } from "../lib/metrics.js";
 import {
   consumeQuote,
   createQuote,
@@ -24,21 +25,25 @@ export async function fxRoutes(app: FastifyInstance) {
           "VALIDATION_ERROR",
           "Two distinct ISO currencies are required",
         );
-      if (envVars.FX_PROVIDER_DOWN)
+      if (envVars.FX_PROVIDER_DOWN) {
+        fxProviderFailures.inc();
         return fail(
           reply,
           503,
           "FX_PROVIDER_UNAVAILABLE",
           "FX provider is unavailable; no cached rate is used",
         );
+      }
       const rate = rates[`${baseCurrency}_${quoteCurrency}`];
-      if (!rate)
+      if (!rate) {
+        fxProviderFailures.inc();
         return fail(
           reply,
           503,
           "FX_PROVIDER_UNAVAILABLE",
           "The provider has no rate for this pair",
         );
+      }
       const quote = await createQuote(baseCurrency!, quoteCurrency!, rate);
       return reply.code(201).send(quote);
     },
