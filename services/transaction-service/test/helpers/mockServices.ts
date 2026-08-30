@@ -44,6 +44,20 @@ export function startAccountMock() {
   const state: AccountState = { balances: new Map(), appliedOps: [] };
   const server = http.createServer(async (req, res) => {
     const { method, url = "" } = req;
+    const gop = url.match(/^\/wallets\/([^/]+)\/operations\/([^/]+)$/);
+    if (method === "GET" && gop) {
+      const operationKey = decodeURIComponent(gop[2]);
+      if (state.appliedOps.includes(operationKey))
+        return json(res, 200, {
+          walletId: decodeURIComponent(gop[1]),
+          operationKey,
+          deltaCents: 0,
+        });
+      return json(res, 404, {
+        error: "OPERATION_NOT_FOUND",
+        message: "Operation was not found",
+      });
+    }
     const m = url.match(/^\/wallets\/([^/]+)\/operations$/);
     if (method === "POST" && m) {
       const walletId = decodeURIComponent(m[1]);

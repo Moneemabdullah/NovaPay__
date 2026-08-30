@@ -6,7 +6,8 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "build": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@fastify/helmet": "^13.1.1",

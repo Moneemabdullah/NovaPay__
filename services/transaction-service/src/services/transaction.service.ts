@@ -2,94 +2,175 @@ import { Prisma, Transaction } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
 import { setContext } from "../lib/context.js";
-import { post, cents, sha, canonical } from "../lib/http.js";
+import { post, cents, sha, canonical, get } from "../lib/http.js";
 
 export async function execute(tx: Transaction, id?: string) {
-  const existing = await fetch(
-    `${envVars.LEDGER_SERVICE_URL}/batches/${tx.id}`,
-  ).then((r) => (r.ok ? r.json() : null));
+  const current = await prisma.transaction.findUnique({
+    where: { id: tx.id },
+    select: { status: true },
+  });
+  if (
+    current &&
+    current.status !== "PROCESSING" &&
+    current.status !== "PENDING"
+  ) {
+    if (current.status === "COMPLETED") {
+      const key = await prisma.idempotencyKey.findUnique({
+        where: { key: tx.idempotencyKey },
+      });
+      return (
+        key?.responseBody ?? { transactionId: tx.id, status: "COMPLETED" }
+      );
+    }
+    return { transactionId: tx.id, status: current.status };
+  }
   const destination = tx.destinationAmountCents ?? tx.amountCents;
   const currency = tx.destinationCurrency ?? tx.currency;
-  if (!existing) {
+  const reversalKey = `${tx.id}:reversal`;
+  const creditKey = `${tx.id}:credit`;
+
+  // Reconcile against the account: was the sender debit reversed? The account
+  // is the durable source of truth for wallet operations (`walletBalanceOperation`),
+  // so this is safe across a crash between the reversal being applied and this
+  // flow persisting the terminal status. A reversed debit must never be treated
+  // as a live, existing debit again.
+  let reversalApplied: boolean;
+  try {
+    reversalApplied =
+      (await get(
+        envVars.ACCOUNT_SERVICE_URL,
+        `/wallets/${tx.senderWalletId}/operations/${encodeURIComponent(reversalKey)}`,
+        id,
+      )) !== null;
+  } catch (e: any) {
+    throw Object.assign(
+      new Error("Cannot reconcile sender debit state with the account"),
+      {
+        status: 503,
+        code: "ACCOUNT_RECONCILIATION_UNAVAILABLE",
+        cause: e,
+      },
+    );
+  }
+
+  const existing = await get(
+    envVars.LEDGER_SERVICE_URL,
+    `/batches/${tx.id}`,
+    id,
+  );
+
+  if (reversalApplied) {
+    await prisma.transaction.updateMany({
+      where: { id: tx.id, status: "PROCESSING" },
+      data: {
+        status: "REVERSED",
+        failureReason: "Sender debit reversed; transfer aborted",
+      },
+    });
+    return { transactionId: tx.id, status: "REVERSED" };
+  }
+
+  if (existing) {
+    await post(
+      envVars.ACCOUNT_SERVICE_URL,
+      `/wallets/${tx.recipientWalletId}/operations`,
+      { operationKey: creditKey, deltaCents: Number(destination) },
+      id,
+    );
+    const body = { transactionId: tx.id, status: "COMPLETED" };
+    await prisma.$transaction([
+      prisma.transaction.updateMany({
+        where: { id: tx.id, status: "PROCESSING" },
+        data: { status: "COMPLETED", completedAt: new Date() },
+      }),
+      prisma.idempotencyKey.update({
+        where: { key: tx.idempotencyKey },
+        data: { status: "completed", responseBody: body },
+      }),
+    ]);
+    return body;
+  }
+
+  const entries = tx.destinationCurrency
+    ? [
+        {
+          accountId: tx.senderWalletId,
+          direction: "debit",
+          amountCents: Number(tx.amountCents),
+          currency: tx.currency,
+          fxRate: tx.fxRate?.toString(),
+        },
+        {
+          accountId: "00000000-0000-0000-0000-000000000001",
+          direction: "credit",
+          amountCents: Number(tx.amountCents),
+          currency: tx.currency,
+          fxRate: tx.fxRate?.toString(),
+        },
+        {
+          accountId: "00000000-0000-0000-0000-000000000001",
+          direction: "debit",
+          amountCents: Number(destination),
+          currency,
+          fxRate: tx.fxRate?.toString(),
+        },
+        {
+          accountId: tx.recipientWalletId,
+          direction: "credit",
+          amountCents: Number(destination),
+          currency,
+          fxRate: tx.fxRate?.toString(),
+        },
+      ]
+    : [
+        {
+          accountId: tx.senderWalletId,
+          direction: "debit",
+          amountCents: Number(tx.amountCents),
+          currency: tx.currency,
+        },
+        {
+          accountId: tx.recipientWalletId,
+          direction: "credit",
+          amountCents: Number(tx.amountCents),
+          currency: tx.currency,
+        },
+      ];
+  await post(
+    envVars.ACCOUNT_SERVICE_URL,
+    `/wallets/${tx.senderWalletId}/operations`,
+    { operationKey: `${tx.id}:debit`, deltaCents: -Number(tx.amountCents) },
+    id,
+  );
+  try {
+    await post(envVars.LEDGER_SERVICE_URL, "/batches", { transactionId: tx.id, entries }, id);
+  } catch (e) {
+    // Reversing is idempotent (`{id}:reversal`). Even if this POST is lost
+    // mid-flight, the account commits it and a later recovery observes it via
+    // the operation lookup above — the debit can never be replayed as live,
+    // so no batch is ever created and no credit is ever issued for it.
     await post(
       envVars.ACCOUNT_SERVICE_URL,
       `/wallets/${tx.senderWalletId}/operations`,
-      {
-        operationKey: `${tx.id}:debit`,
-        deltaCents: -Number(tx.amountCents),
-      },
+      { operationKey: reversalKey, deltaCents: Number(tx.amountCents) },
       id,
     );
-    try {
-      const entries = tx.destinationCurrency
-        ? [
-            {
-              accountId: tx.senderWalletId,
-              direction: "debit",
-              amountCents: Number(tx.amountCents),
-              currency: tx.currency,
-              fxRate: tx.fxRate?.toString(),
-            },
-            {
-              accountId: "00000000-0000-0000-0000-000000000001",
-              direction: "credit",
-              amountCents: Number(tx.amountCents),
-              currency: tx.currency,
-              fxRate: tx.fxRate?.toString(),
-            },
-            {
-              accountId: "00000000-0000-0000-0000-000000000001",
-              direction: "debit",
-              amountCents: Number(destination),
-              currency,
-              fxRate: tx.fxRate?.toString(),
-            },
-            {
-              accountId: tx.recipientWalletId,
-              direction: "credit",
-              amountCents: Number(destination),
-              currency,
-              fxRate: tx.fxRate?.toString(),
-            },
-          ]
-        : [
-            {
-              accountId: tx.senderWalletId,
-              direction: "debit",
-              amountCents: Number(tx.amountCents),
-              currency: tx.currency,
-            },
-            {
-              accountId: tx.recipientWalletId,
-              direction: "credit",
-              amountCents: Number(tx.amountCents),
-              currency: tx.currency,
-            },
-          ];
-      await post(envVars.LEDGER_SERVICE_URL, "/batches", { transactionId: tx.id, entries }, id);
-    } catch (e) {
-      await post(
-        envVars.ACCOUNT_SERVICE_URL,
-        `/wallets/${tx.senderWalletId}/operations`,
-        {
-          operationKey: `${tx.id}:reversal`,
-          deltaCents: Number(tx.amountCents),
-        },
-        id,
-      );
-      throw e;
-    }
+    await prisma.transaction.updateMany({
+      where: { id: tx.id, status: "PROCESSING" },
+      data: { status: "REVERSED", failureReason: (e as any).code ?? (e as any).message },
+    });
+    throw e;
   }
   await post(
     envVars.ACCOUNT_SERVICE_URL,
     `/wallets/${tx.recipientWalletId}/operations`,
-    { operationKey: `${tx.id}:credit`, deltaCents: Number(destination) },
+    { operationKey: creditKey, deltaCents: Number(destination) },
     id,
   );
   const body = { transactionId: tx.id, status: "COMPLETED" };
   await prisma.$transaction([
-    prisma.transaction.update({
-      where: { id: tx.id },
+    prisma.transaction.updateMany({
+      where: { id: tx.id, status: "PROCESSING" },
       data: { status: "COMPLETED", completedAt: new Date() },
     }),
     prisma.idempotencyKey.update({

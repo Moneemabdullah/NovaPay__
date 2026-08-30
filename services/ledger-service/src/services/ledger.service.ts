@@ -114,12 +114,16 @@ export async function invariantCheck() {
   const rows = await prisma.$queryRaw<{ currency: string; delta: bigint }[]>(
     Prisma.sql`SELECT currency,COALESCE(SUM(CASE WHEN direction='debit' THEN amount_cents ELSE -amount_cents END),0) delta FROM ledger_entries GROUP BY currency`,
   );
-  const ok = rows.every((x) => x.delta === 0n);
+  const deltas = rows.map((x) => ({
+    currency: x.currency,
+    delta: Number(x.delta),
+  }));
+  const ok = deltas.every((x) => x.delta === 0);
   if (!ok) ledgerInvariantViolations.inc();
   return {
-    delta: rows.reduce((v, x) => v + Number(x.delta), 0),
+    delta: deltas.reduce((v, x) => v + Number(x.delta), 0),
     ok,
-    byCurrency: rows,
+    byCurrency: deltas,
   };
 }
 
