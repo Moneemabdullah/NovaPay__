@@ -1,0 +1,26 @@
+model Transaction {
+  id                     String            @id @default(uuid()) @db.Uuid
+  idempotencyKey         String            @unique @map("idempotency_key")
+  requestHash            String            @map("request_hash")
+  senderWalletId         String            @map("sender_wallet_id") @db.Uuid
+  recipientWalletId      String            @map("recipient_wallet_id") @db.Uuid
+  amountCents            BigInt            @map("amount_cents")
+  currency               String            @db.Char(3)
+  destinationAmountCents BigInt?           @map("destination_amount_cents")
+  destinationCurrency    String?           @map("destination_currency") @db.Char(3)
+  fxRate                 Decimal?          @map("fx_rate") @db.Decimal(18, 8)
+  fxQuoteId              String?           @map("fx_quote_id") @db.Uuid
+  status                 TransactionStatus @default(PENDING)
+  processingStartedAt    DateTime?         @map("processing_started_at")
+  completedAt            DateTime?         @map("completed_at")
+  failureReason          String?           @map("failure_reason")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
+  idempotency            IdempotencyKey    @relation(fields: [idempotencyKey], references: [key])
+
+  @@index([status])
+  @@index([senderWalletId])
+  @@index([recipientWalletId])
+  @@index([createdAt])
+  @@map("transactions")
+}

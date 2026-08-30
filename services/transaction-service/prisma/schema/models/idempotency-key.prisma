@@ -1,0 +1,13 @@
+model IdempotencyKey {
+  key           String       @id
+  requestHash   String       @map("request_hash")
+  status        String       @default("processing")
+  responseBody  Json?        @map("response_body")
+  transactionId String?      @unique @map("transaction_id") @db.Uuid
+  createdAt     DateTime     @default(now()) @map("created_at")
+  expiresAt     DateTime     @default(dbgenerated("now() + interval '24 hours'")) @map("expires_at")
+  transaction   Transaction?
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
