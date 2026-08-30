@@ -1,0 +1,8 @@
+model LedgerTransaction {
+  id            String        @id @default(uuid()) @db.Uuid
+  transactionId String        @unique @map("transaction_id") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at")
+  entries       LedgerEntry[]
+
+  @@map("ledger_transactions")
+}

@@ -1,0 +1,17 @@
+model LedgerEntry {
+  id                  BigInt            @id @default(autoincrement())
+  ledgerTransactionId String            @map("ledger_transaction_id") @db.Uuid
+  accountId           String            @map("account_id") @db.Uuid
+  direction           String
+  amountCents         BigInt            @map("amount_cents")
+  currency            String            @db.Char(3)
+  fxRate              Decimal?          @map("fx_rate") @db.Decimal(18, 8)
+  prevHash            String?           @map("prev_hash")
+  entryHash           String            @map("entry_hash")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  transaction         LedgerTransaction @relation(fields: [ledgerTransactionId], references: [id])
+
+  @@index([ledgerTransactionId])
+  @@index([accountId, createdAt])
+  @@map("ledger_entries")
+}
