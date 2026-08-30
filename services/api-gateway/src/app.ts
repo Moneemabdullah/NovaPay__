@@ -1,23 +1,25 @@
 import Fastify from "fastify";
 import proxy from "@fastify/http-proxy";
 import helmet from "@fastify/helmet";
-import { config } from "./config.js";
+import { envVars } from "./config/env.utils.js";
 import { requestIdPlugin } from "./middlewares/request-id.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 
 const routes: Record<string, string> = {
-  "/accounts": config.serviceUrls.accounts,
-  "/transactions": config.serviceUrls.transactions,
-  "/transfers": config.serviceUrls.transactions,
-  "/ledger": config.serviceUrls.ledger,
-  "/fx": config.serviceUrls.fx,
-  "/payroll": config.serviceUrls.payroll,
-  "/admin": config.serviceUrls.admin,
+  "/accounts": envVars.ACCOUNT_SERVICE_URL,
+  "/transactions": envVars.TRANSACTION_SERVICE_URL,
+  "/transfers": envVars.TRANSACTION_SERVICE_URL,
+  "/ledger": envVars.LEDGER_SERVICE_URL,
+  "/fx": envVars.FX_SERVICE_URL,
+  "/payroll": envVars.PAYROLL_SERVICE_URL,
+  "/admin": envVars.ADMIN_SERVICE_URL,
 };
 
 export async function buildApp() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: { level: envVars.LOG_LEVEL },
+  });
   await app.register(helmet);
   await app.register(requestIdPlugin);
   registerErrorHandler(app);

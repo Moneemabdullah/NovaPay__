@@ -1,8 +1,8 @@
 import { Worker } from "bullmq";
-import { config } from "./config.js";
+import { envVars } from "./config/env.utils.js";
 import { processPayroll } from "./services/payroll.service.js";
 
-new Worker(config.queueName, (j) => processPayroll(j.data.jobId), {
-  connection: { url: config.redisUrl },
+new Worker(envVars.QUEUE_NAME, (j) => processPayroll(j.data.jobId), {
+  connection: { url: envVars.REDIS_URL },
   concurrency: 1,
 });

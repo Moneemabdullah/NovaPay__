@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { config } from "../config.js";
+import { envVars } from "../config/env.utils.js";
 import { fail } from "../lib/fail.js";
 import {
   consumeQuote,
@@ -24,7 +24,7 @@ export async function fxRoutes(app: FastifyInstance) {
           "VALIDATION_ERROR",
           "Two distinct ISO currencies are required",
         );
-      if (config.fxProviderDown)
+      if (envVars.FX_PROVIDER_DOWN)
         return fail(
           reply,
           503,

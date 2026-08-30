@@ -1,9 +1,9 @@
-import { config } from "../config.js";
+import { envVars } from "../config/env.utils.js";
 
 export function checkLedgerInvariant() {
-  return fetch(`${config.ledgerServiceUrl}/invariant-check`);
+  return fetch(`${envVars.LEDGER_SERVICE_URL}/invariant-check`);
 }
 
 export function verifyAudit() {
-  return fetch(`${config.ledgerServiceUrl}/audit/verify`);
+  return fetch(`${envVars.LEDGER_SERVICE_URL}/audit/verify`);
 }

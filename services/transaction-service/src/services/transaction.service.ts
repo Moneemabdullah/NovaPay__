@@ -1,11 +1,11 @@
 import { Prisma, Transaction } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { config } from "../config.js";
+import { envVars } from "../config/env.utils.js";
 import { post, cents, sha, canonical } from "../lib/http.js";
 
-const account = config.serviceUrls.account;
-const ledger = config.serviceUrls.ledger;
-const fx = config.serviceUrls.fx;
+const account = envVars.ACCOUNT_SERVICE_URL;
+const ledger = envVars.LEDGER_SERVICE_URL;
+const fx = envVars.FX_SERVICE_URL;
 
 export async function execute(tx: Transaction, id?: string) {
   const existing = await fetch(`${ledger}/batches/${tx.id}`).then((r) =>

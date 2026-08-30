@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
-import { config } from "../config.js";
+import { envVars } from "../config/env.utils.js";
 
 const kek = () =>
-  crypto.createHash("sha256").update(config.fieldEncryptionKek).digest();
+  crypto.createHash("sha256").update(envVars.FIELD_ENCRYPTION_KEK).digest();
 
 function encrypted(value: string, key: Buffer) {
   const iv = crypto.randomBytes(12);

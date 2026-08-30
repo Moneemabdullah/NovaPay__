@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { Queue } from "bullmq";
 import { prisma } from "../lib/prisma.js";
-import { config } from "../config.js";
+import { envVars } from "../config/env.utils.js";
 
 export async function createPayrollJob(input: {
   employerAccountId: string;
@@ -27,7 +27,7 @@ export async function createPayrollJob(input: {
     return j;
   });
   await new Queue(`payroll:${employerAccountId}`, {
-    connection: { url: config.redisUrl },
+    connection: { url: envVars.REDIS_URL },
   }).add("process", { jobId: job.id }, { attempts: 3 });
   return job;
 }
@@ -48,7 +48,7 @@ export async function processPayroll(jobId: string) {
     orderBy: { lineIndex: "asc" },
   })) {
     const response = await fetch(
-      `${config.transactionServiceUrl}/transactions`,
+      `${envVars.TRANSACTION_SERVICE_URL}/transactions`,
       {
         method: "POST",
         headers: {

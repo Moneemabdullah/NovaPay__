@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { config } from "../config.js";
+import { envVars } from "../config/env.utils.js";
 
 export const canonical = (x: any): string =>
   Array.isArray(x)
@@ -35,7 +35,7 @@ export const cents = (amount: bigint, rate: string) =>
   Number((amount * BigInt(rate.replace(".", "").padEnd(9, "0"))) / 100000000n);
 
 export const http = {
-  account: config.serviceUrls.account,
-  ledger: config.serviceUrls.ledger,
-  fx: config.serviceUrls.fx,
+  account: envVars.ACCOUNT_SERVICE_URL,
+  ledger: envVars.LEDGER_SERVICE_URL,
+  fx: envVars.FX_SERVICE_URL,
 };
