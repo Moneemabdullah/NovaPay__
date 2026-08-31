@@ -12,6 +12,10 @@ export async function transactionRoutes(app: FastifyInstance) {
     transactionsTotal.labels("transaction-service", "international").inc();
     return initiate(q, r, true);
   });
+  app.post("/international", (q, r) => {
+    transactionsTotal.labels("transaction-service", "international").inc();
+    return initiate(q, r, true);
+  });
   app.post("/internal/recover", async () => {
     const xs = await prisma.transaction.findMany({
       where: {
