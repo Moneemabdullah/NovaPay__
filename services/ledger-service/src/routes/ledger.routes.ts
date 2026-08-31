@@ -35,15 +35,23 @@ export async function ledgerRoutes(app: FastifyInstance) {
     "/batches/:transactionId",
     async (request, reply) => {
       const transaction = await getBatch(request.params.transactionId);
-      return (
-        transaction ??
-        fail(
+      if (!transaction) {
+        return fail(
           reply,
           404,
           "LEDGER_TRANSACTION_NOT_FOUND",
           "Ledger transaction not found",
-        )
-      );
+        );
+      }
+      return {
+        ...transaction,
+        entries: transaction.entries.map((entry) => ({
+          ...entry,
+          id: entry.id.toString(),
+          amountCents: entry.amountCents.toString(),
+          fxRate: entry.fxRate ? entry.fxRate.toString() : undefined,
+        })),
+      };
     },
   );
 

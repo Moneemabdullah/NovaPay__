@@ -39,6 +39,7 @@ export async function createWallet(input: {
   return {
     ...wallet,
     balanceCents: wallet.balanceCents.toString(),
+    version: wallet.version.toString(),
   };
 }
 
@@ -49,6 +50,7 @@ export async function listWallets(userId: string) {
       id: true,
       currency: true,
       balanceCents: true,
+      version: true,
       status: true,
     },
     orderBy: { currency: "asc" },
@@ -57,6 +59,7 @@ export async function listWallets(userId: string) {
   return wallets.map((wallet) => ({
     ...wallet,
     balanceCents: wallet.balanceCents.toString(),
+    version: wallet.version.toString(),
   }));
 }
 
@@ -66,6 +69,7 @@ export async function getWallet(walletId: string) {
     select: {
       id: true,
       balanceCents: true,
+      version: true,
       currency: true,
       status: true,
     },
@@ -76,6 +80,7 @@ export async function getWallet(walletId: string) {
   return {
     ...wallet,
     balanceCents: wallet.balanceCents.toString(),
+    version: wallet.version.toString(),
   };
 }
 
@@ -83,10 +88,12 @@ export async function getWalletOperation(
   walletId: string,
   operationKey: string,
 ) {
-  return prisma.walletBalanceOperation.findUnique({
+  const op = await prisma.walletBalanceOperation.findUnique({
     where: { walletId_operationKey: { walletId, operationKey } },
     select: { walletId: true, operationKey: true, deltaCents: true },
   });
+  if (!op) return null;
+  return { ...op, deltaCents: op.deltaCents.toString() };
 }
 
 export async function applyWalletOperation(input: {
@@ -99,7 +106,11 @@ export async function applyWalletOperation(input: {
     const replay = await tx.walletBalanceOperation.findUnique({
       where: { walletId_operationKey: { walletId, operationKey } },
     });
-    if (replay) return tx.wallet.findUnique({ where: { id: walletId } });
+    if (replay) {
+      const w = await tx.wallet.findUnique({ where: { id: walletId } });
+      if (!w) return null;
+      return { ...w, balanceCents: w.balanceCents.toString(), version: w.version.toString() };
+    }
     const changed = await tx.$executeRaw(
       Prisma.sql`UPDATE wallets SET balance_cents = balance_cents + ${BigInt(deltaCents)}, version = version + 1, updated_at = now() WHERE id = ${walletId}::uuid AND status = 'active' AND balance_cents + ${BigInt(deltaCents)} >= 0`,
     );
@@ -107,6 +118,12 @@ export async function applyWalletOperation(input: {
     await tx.walletBalanceOperation.create({
       data: { walletId, operationKey, deltaCents: BigInt(deltaCents) },
     });
-    return tx.wallet.findUnique({ where: { id: walletId } });
+    const wallet = await tx.wallet.findUnique({ where: { id: walletId } });
+    if (!wallet) return null;
+    return {
+      ...wallet,
+      balanceCents: wallet.balanceCents.toString(),
+      version: wallet.version.toString(),
+    };
   });
 }

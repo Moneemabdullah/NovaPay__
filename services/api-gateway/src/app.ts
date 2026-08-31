@@ -7,15 +7,15 @@ import { httpMetricsHooks } from "./lib/metrics.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 
-const routes: Record<string, string> = {
-  "/accounts": envVars.ACCOUNT_SERVICE_URL,
-  "/transactions": envVars.TRANSACTION_SERVICE_URL,
-  "/transfers": envVars.TRANSACTION_SERVICE_URL,
-  "/ledger": envVars.LEDGER_SERVICE_URL,
-  "/fx": envVars.FX_SERVICE_URL,
-  "/payroll": envVars.PAYROLL_SERVICE_URL,
-  "/admin": envVars.ADMIN_SERVICE_URL,
-};
+const routes: { prefix: string; upstream: string; rewritePrefix: string }[] = [
+  { prefix: "/accounts", upstream: envVars.ACCOUNT_SERVICE_URL, rewritePrefix: "/" },
+  { prefix: "/transactions", upstream: envVars.TRANSACTION_SERVICE_URL, rewritePrefix: "/transactions" },
+  { prefix: "/transfers", upstream: envVars.TRANSACTION_SERVICE_URL, rewritePrefix: "/" },
+  { prefix: "/ledger", upstream: envVars.LEDGER_SERVICE_URL, rewritePrefix: "/" },
+  { prefix: "/fx", upstream: envVars.FX_SERVICE_URL, rewritePrefix: "/" },
+  { prefix: "/payroll", upstream: envVars.PAYROLL_SERVICE_URL, rewritePrefix: "/" },
+  { prefix: "/admin", upstream: envVars.ADMIN_SERVICE_URL, rewritePrefix: "/" },
+];
 
 export async function buildApp() {
   const app = Fastify({
@@ -28,11 +28,11 @@ export async function buildApp() {
   registerErrorHandler(app);
   await app.register(registerRoutes);
 
-  for (const [prefix, upstream] of Object.entries(routes)) {
+  for (const { prefix, upstream, rewritePrefix } of routes) {
     await app.register(proxy, {
       upstream,
       prefix,
-      rewritePrefix: prefix,
+      rewritePrefix,
     });
   }
 

@@ -9,6 +9,7 @@ RUN npm ci
 
 # --- Stage 2: generate the Prisma client and typecheck the source ---
 FROM node:20-alpine AS builder
+ARG DATABASE_URL
 ENV PRISMA_GENERATE_SKIP_AUTOGENERATION=true
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -18,6 +19,8 @@ RUN npx prisma generate \
 
 # --- Stage 3: runtime image with production dependencies only ---
 FROM node:20-alpine AS production
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
 ENV PRISMA_GENERATE_SKIP_AUTOGENERATION=true
 WORKDIR /app
 COPY package.json package-lock.json ./

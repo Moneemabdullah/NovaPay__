@@ -107,7 +107,10 @@ export async function createBatch(input: {
 }
 
 export function getBatch(transactionId: string) {
-  return prisma.ledgerTransaction.findUnique({ where: { transactionId } });
+  return prisma.ledgerTransaction.findUnique({
+    where: { transactionId },
+    include: { entries: true },
+  });
 }
 
 export async function invariantCheck() {

@@ -13,9 +13,9 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       has_changes: ${{ steps.matrix.outputs.has_changes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -76,12 +76,14 @@ jobs:
       fail-fast: false
       matrix:
         service: ${{ fromJson(needs.detect-changes.outputs.matrix).service }}
+    env:
+      DATABASE_URL: "postgresql://test:test@localhost:5432/test"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -94,6 +96,15 @@ jobs:
       - name: Run unit tests
         working-directory: services/${{ matrix.service }}
         run: npm test
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
+          ACCOUNT_SERVICE_URL: "http://localhost:19999"
+          LEDGER_SERVICE_URL: "http://localhost:19999"
+          FX_SERVICE_URL: "http://localhost:19999"
+          REDIS_URL: "redis://localhost:6379"
+          QUEUE_NAME: "test-queue"
+          TRANSACTION_SERVICE_URL: "http://localhost:19999"
 
       - name: TypeScript typecheck
         working-directory: services/${{ matrix.service }}
@@ -133,7 +144,7 @@ jobs:
 
       - name: Build Docker image
         working-directory: services/${{ matrix.service }}
-        run: docker build -t ${{ matrix.service }}:${{ steps.version.outputs.version }} .
+        run: docker build --build-arg DATABASE_URL="postgresql://test:test@localhost:5432/test" -t ${{ matrix.service }}:${{ steps.version.outputs.version }} .
 
       - name: Verify Docker image
         run: docker images ${{ matrix.service }}:${{ steps.version.outputs.version }}
