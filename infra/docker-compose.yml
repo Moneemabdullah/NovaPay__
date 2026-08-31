@@ -18,7 +18,7 @@ services:
       POSTGRES_MULTIPLE_DATABASES: "account_db,transaction_db,ledger_db,fx_db,payroll_db,admin_db"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./scripts/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh
+      - ../scripts/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh
     ports:
       - "5432:5432"
     healthcheck:
@@ -43,7 +43,7 @@ services:
         condition: service_started
 
   api-gateway:
-    build: ./services/api-gateway
+    build: ../services/api-gateway
     environment:
       <<: *node-env
       OTEL_SERVICE_NAME: api-gateway
@@ -63,7 +63,7 @@ services:
       - admin-service
 
   account-service:
-    build: ./services/account-service
+    build: ../services/account-service
     environment:
       <<: *node-env
       OTEL_SERVICE_NAME: account-service
@@ -75,7 +75,7 @@ services:
         condition: service_healthy
 
   transaction-service:
-    build: ./services/transaction-service
+    build: ../services/transaction-service
     environment:
       <<: *node-env
       OTEL_SERVICE_NAME: transaction-service
@@ -89,7 +89,7 @@ services:
         condition: service_healthy
 
   ledger-service:
-    build: ./services/ledger-service
+    build: ../services/ledger-service
     environment:
       <<: *node-env
       OTEL_SERVICE_NAME: ledger-service
@@ -100,7 +100,7 @@ services:
         condition: service_healthy
 
   fx-service:
-    build: ./services/fx-service
+    build: ../services/fx-service
     environment:
       <<: *node-env
       OTEL_SERVICE_NAME: fx-service
@@ -112,7 +112,7 @@ services:
         condition: service_healthy
 
   payroll-service:
-    build: ./services/payroll-service
+    build: ../services/payroll-service
     environment:
       <<: *node-env
       PORT: 3005
@@ -127,7 +127,7 @@ services:
         condition: service_started
 
   admin-service:
-    build: ./services/admin-service
+    build: ../services/admin-service
     environment:
       <<: *node-env
       PORT: 3006
@@ -141,8 +141,8 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
     ports:
       - "9090:9090"
 
@@ -154,7 +154,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/novapay.json
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - prometheus
 
