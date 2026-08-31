@@ -10,16 +10,14 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.changes.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_changes: ${{ steps.matrix.outputs.has_changes }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: dorny/paths-filter@v3
-        id: changes
+        id: filter
         with:
-          list-output-format: json
           filters: |
             api-gateway:
               - 'services/api-gateway/**'
@@ -36,19 +34,43 @@ jobs:
             admin-service:
               - 'services/admin-service/**'
 
-      - name: Build service matrix
+      - name: Build matrix from filter outputs
         id: matrix
         run: |
-          services='${{ steps.changes.outputs.changes }}'
-          if [ "$services" = "[]" ] || [ -z "$services" ]; then
-            echo 'matrix={"service":[]}' >> "$GITHUB_OUTPUT"
+          services='[]'
+          if [ "${{ steps.filter.outputs.api-gateway }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('api-gateway'); print(json.dumps(m))")
+          fi
+          if [ "${{ steps.filter.outputs.account-service }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('account-service'); print(json.dumps(m))")
+          fi
+          if [ "${{ steps.filter.outputs.transaction-service }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('transaction-service'); print(json.dumps(m))")
+          fi
+          if [ "${{ steps.filter.outputs.ledger-service }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('ledger-service'); print(json.dumps(m))")
+          fi
+          if [ "${{ steps.filter.outputs.fx-service }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('fx-service'); print(json.dumps(m))")
+          fi
+          if [ "${{ steps.filter.outputs.payroll-service }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('payroll-service'); print(json.dumps(m))")
+          fi
+          if [ "${{ steps.filter.outputs.admin-service }}" = "true" ]; then
+            services=$(echo "$services" | python3 -c "import sys,json; m=json.load(sys.stdin); m.append('admin-service'); print(json.dumps(m))")
+          fi
+
+          if [ "$services" = "[]" ]; then
+            echo "matrix={\"service\":[]}" >> "$GITHUB_OUTPUT"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "matrix={\"service\":${services}}" >> "$GITHUB_OUTPUT"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
   test-build:
     needs: detect-changes
-    if: fromJson(needs.detect-changes.outputs.matrix).service[0] != null
+    if: needs.detect-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -115,3 +137,30 @@ jobs:
 
       - name: Verify Docker image
         run: docker images ${{ matrix.service }}:${{ steps.version.outputs.version }}
+
+  ci-status:
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [detect-changes, test-build]
+    steps:
+      - name: Check results
+        run: |
+          echo "detect-changes result: ${{ needs.detect-changes.result }}"
+          echo "test-build result:     ${{ needs.test-build.result }}"
+
+          if [ "${{ needs.detect-changes.result }}" = "failure" ]; then
+            echo "::error::Change detection failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.test-build.result }}" = "failure" ]; then
+            echo "::error::One or more service jobs failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.test-build.result }}" = "cancelled" ]; then
+            echo "::error::Service jobs were cancelled"
+            exit 1
+          fi
+
+          echo "All checks passed"
