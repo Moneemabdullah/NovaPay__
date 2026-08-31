@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -8,30 +10,54 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      services: ${{ steps.filter.outputs.changes }}
+      matrix: ${{ steps.changes.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            api-gateway: 'services/api-gateway/**'
-            account-service: 'services/account-service/**'
-            transaction-service: 'services/transaction-service/**'
-            ledger-service: 'services/ledger-service/**'
-            fx-service: 'services/fx-service/**'
-            payroll-service: 'services/payroll-service/**'
-            admin-service: 'services/admin-service/**'
+          fetch-depth: 0
 
-  test-and-build:
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          list-output-format: json
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+            account-service:
+              - 'services/account-service/**'
+            transaction-service:
+              - 'services/transaction-service/**'
+            ledger-service:
+              - 'services/ledger-service/**'
+            fx-service:
+              - 'services/fx-service/**'
+            payroll-service:
+              - 'services/payroll-service/**'
+            admin-service:
+              - 'services/admin-service/**'
+
+      - name: Build service matrix
+        id: matrix
+        run: |
+          services='${{ steps.changes.outputs.changes }}'
+          if [ "$services" = "[]" ] || [ -z "$services" ]; then
+            echo 'matrix={"service":[]}' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix={\"service\":${services}}" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-build:
     needs: detect-changes
-    if: needs.detect-changes.outputs.services != '[]'
+    if: fromJson(needs.detect-changes.outputs.matrix).service[0] != null
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+        service: ${{ fromJson(needs.detect-changes.outputs.matrix).service }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -41,24 +67,51 @@ jobs:
 
       - name: Install dependencies
         working-directory: services/${{ matrix.service }}
-        run: npm install
+        run: npm ci
 
       - name: Run unit tests
         working-directory: services/${{ matrix.service }}
         run: npm test
 
-      # Block merge if tests fail: the job simply fails above and GitHub's
-      # branch protection rule (configured on `main`) requires this check.
+      - name: TypeScript typecheck
+        working-directory: services/${{ matrix.service }}
+        run: npm run build
+
+      - name: Validate version bump
+        working-directory: services/${{ matrix.service }}
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+          else
+            BASE_SHA=${{ github.event.before }}
+          fi
+
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "Initial commit — version check skipped"
+            exit 0
+          fi
+
+          BASE_VERSION=$(git show "$BASE_SHA:services/${{ matrix.service }}/package.json" | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
+          echo "Base version:    $BASE_VERSION"
+
+          if [ "$CURRENT_VERSION" = "$BASE_VERSION" ]; then
+            echo "::error::Version must be bumped when modifying ${{ matrix.service }}. Current: $CURRENT_VERSION, Base: $BASE_VERSION"
+            exit 1
+          fi
+
+          echo "Version bumped: $BASE_VERSION → $CURRENT_VERSION"
 
       - name: Read service version
         id: version
         working-directory: services/${{ matrix.service }}
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Build Docker image (build-only, no push in this stub)
+      - name: Build Docker image
         working-directory: services/${{ matrix.service }}
         run: docker build -t ${{ matrix.service }}:${{ steps.version.outputs.version }} .
 
-      # TODO before production: push to a registry, require a version bump
-      # check (compare package.json version on the PR branch vs main and
-      # fail if unchanged for a service whose files changed).
+      - name: Verify Docker image
+        run: docker images ${{ matrix.service }}:${{ steps.version.outputs.version }}
