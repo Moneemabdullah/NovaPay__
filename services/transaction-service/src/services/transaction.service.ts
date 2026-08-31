@@ -3,8 +3,16 @@ import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
 import { setContext } from "../lib/context.js";
 import { post, cents, sha, canonical, get } from "../lib/http.js";
+import { getTracer } from "../lib/otel.js";
+import { SpanStatusCode } from "@opentelemetry/api";
 
 export async function execute(tx: Transaction, id?: string) {
+  const tracer = getTracer();
+  return tracer.startActiveSpan("transaction.execute", async (span) => {
+    try {
+      span.setAttribute("transaction.id", tx.id);
+      span.setAttribute("transaction.currency", tx.currency);
+      span.setAttribute("transaction.amount_cents", Number(tx.amountCents));
   const current = await prisma.transaction.findUnique({
     where: { id: tx.id },
     select: { status: true },
@@ -18,10 +26,14 @@ export async function execute(tx: Transaction, id?: string) {
       const key = await prisma.idempotencyKey.findUnique({
         where: { key: tx.idempotencyKey },
       });
+      span.setAttribute("transaction.replay", true);
+      span.end();
       return (
         key?.responseBody ?? { transactionId: tx.id, status: "COMPLETED" }
       );
     }
+    span.setAttribute("transaction.terminal_status", current.status);
+    span.end();
     return { transactionId: tx.id, status: current.status };
   }
   const destination = tx.destinationAmountCents ?? tx.amountCents;
@@ -29,11 +41,6 @@ export async function execute(tx: Transaction, id?: string) {
   const reversalKey = `${tx.id}:reversal`;
   const creditKey = `${tx.id}:credit`;
 
-  // Reconcile against the account: was the sender debit reversed? The account
-  // is the durable source of truth for wallet operations (`walletBalanceOperation`),
-  // so this is safe across a crash between the reversal being applied and this
-  // flow persisting the terminal status. A reversed debit must never be treated
-  // as a live, existing debit again.
   let reversalApplied: boolean;
   try {
     reversalApplied =
@@ -43,6 +50,9 @@ export async function execute(tx: Transaction, id?: string) {
         id,
       )) !== null;
   } catch (e: any) {
+    span.recordException(e);
+    span.setStatus({ code: SpanStatusCode.ERROR, message: e.message });
+    span.end();
     throw Object.assign(
       new Error("Cannot reconcile sender debit state with the account"),
       {
@@ -60,6 +70,7 @@ export async function execute(tx: Transaction, id?: string) {
   );
 
   if (reversalApplied) {
+    span.setAttribute("transaction.outcome", "reversed");
     await prisma.transaction.updateMany({
       where: { id: tx.id, status: "PROCESSING" },
       data: {
@@ -67,10 +78,12 @@ export async function execute(tx: Transaction, id?: string) {
         failureReason: "Sender debit reversed; transfer aborted",
       },
     });
+    span.end();
     return { transactionId: tx.id, status: "REVERSED" };
   }
 
   if (existing) {
+    span.setAttribute("transaction.outcome", "completed_from_batch");
     await post(
       envVars.ACCOUNT_SERVICE_URL,
       `/wallets/${tx.recipientWalletId}/operations`,
@@ -88,6 +101,7 @@ export async function execute(tx: Transaction, id?: string) {
         data: { status: "completed", responseBody: body },
       }),
     ]);
+    span.end();
     return body;
   }
 
@@ -136,19 +150,39 @@ export async function execute(tx: Transaction, id?: string) {
           currency: tx.currency,
         },
       ];
-  await post(
-    envVars.ACCOUNT_SERVICE_URL,
-    `/wallets/${tx.senderWalletId}/operations`,
-    { operationKey: `${tx.id}:debit`, deltaCents: -Number(tx.amountCents) },
-    id,
-  );
+
+  await tracer.startActiveSpan("debit.sender", async (debitSpan) => {
+    try {
+      await post(
+        envVars.ACCOUNT_SERVICE_URL,
+        `/wallets/${tx.senderWalletId}/operations`,
+        { operationKey: `${tx.id}:debit`, deltaCents: -Number(tx.amountCents) },
+        id,
+      );
+      debitSpan.end();
+    } catch (e) {
+      debitSpan.recordException(e as Error);
+      debitSpan.setStatus({ code: SpanStatusCode.ERROR });
+      debitSpan.end();
+      throw e;
+    }
+  });
+
   try {
-    await post(envVars.LEDGER_SERVICE_URL, "/batches", { transactionId: tx.id, entries }, id);
+    await tracer.startActiveSpan("ledger.createBatch", async (ledgerSpan) => {
+      try {
+        await post(envVars.LEDGER_SERVICE_URL, "/batches", { transactionId: tx.id, entries }, id);
+        ledgerSpan.end();
+      } catch (e) {
+        ledgerSpan.recordException(e as Error);
+        ledgerSpan.setStatus({ code: SpanStatusCode.ERROR });
+        ledgerSpan.end();
+        throw e;
+      }
+    });
   } catch (e) {
-    // Reversing is idempotent (`{id}:reversal`). Even if this POST is lost
-    // mid-flight, the account commits it and a later recovery observes it via
-    // the operation lookup above — the debit can never be replayed as live,
-    // so no batch is ever created and no credit is ever issued for it.
+    span.recordException(e as Error);
+    span.setStatus({ code: SpanStatusCode.ERROR, message: (e as any).message });
     await post(
       envVars.ACCOUNT_SERVICE_URL,
       `/wallets/${tx.senderWalletId}/operations`,
@@ -159,14 +193,28 @@ export async function execute(tx: Transaction, id?: string) {
       where: { id: tx.id, status: "PROCESSING" },
       data: { status: "REVERSED", failureReason: (e as any).code ?? (e as any).message },
     });
+    span.setAttribute("transaction.outcome", "reversed_after_ledger_failure");
+    span.end();
     throw e;
   }
-  await post(
-    envVars.ACCOUNT_SERVICE_URL,
-    `/wallets/${tx.recipientWalletId}/operations`,
-    { operationKey: creditKey, deltaCents: Number(destination) },
-    id,
-  );
+
+  await tracer.startActiveSpan("credit.recipient", async (creditSpan) => {
+    try {
+      await post(
+        envVars.ACCOUNT_SERVICE_URL,
+        `/wallets/${tx.recipientWalletId}/operations`,
+        { operationKey: creditKey, deltaCents: Number(destination) },
+        id,
+      );
+      creditSpan.end();
+    } catch (e) {
+      creditSpan.recordException(e as Error);
+      creditSpan.setStatus({ code: SpanStatusCode.ERROR });
+      creditSpan.end();
+      throw e;
+    }
+  });
+
   const body = { transactionId: tx.id, status: "COMPLETED" };
   await prisma.$transaction([
     prisma.transaction.updateMany({
@@ -178,7 +226,16 @@ export async function execute(tx: Transaction, id?: string) {
       data: { status: "completed", responseBody: body },
     }),
   ]);
+  span.setAttribute("transaction.outcome", "completed");
+  span.end();
   return body;
+    } catch (e: any) {
+      span.recordException(e);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: e.message });
+      span.end();
+      throw e;
+    }
+  });
 }
 
 export async function initiate(
@@ -186,10 +243,15 @@ export async function initiate(
   r: any,
   international = false,
 ): Promise<any> {
+  const tracer = getTracer();
+  return tracer.startActiveSpan("transaction.initiate", async (span) => {
+    try {
   const key = q.headers["idempotency-key"] as string | undefined;
   const p = q.body as any;
   const amount = international ? p.sourceAmountCents : p.amountCents;
   const currency = international ? p.sourceCurrency : p.currency;
+  span.setAttribute("transaction.type", international ? "international" : "domestic");
+  span.setAttribute("transaction.currency", currency ?? "unknown");
   if (!key)
     return fail(
       r,
@@ -234,6 +296,7 @@ export async function initiate(
       });
       return x;
     });
+    span.setAttribute("transaction.id", tx.id);
     setContext({ transactionId: tx.id });
   } catch (e: any) {
     if (e.code !== "P2002") throw e;
@@ -253,6 +316,8 @@ export async function initiate(
         "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
         "This idempotency key was already used with a different request payload.",
       );
+    span.setAttribute("transaction.replay", true);
+    span.end();
     return old.status === "completed"
       ? old.responseBody
       : r
@@ -261,12 +326,14 @@ export async function initiate(
   }
   if (international) {
     try {
+      span.setAttribute("fx.quote_id", p.quoteId);
       const quote = await post(
         envVars.FX_SERVICE_URL,
         `/quote/${p.quoteId}/consume`,
         { transactionId: tx.id },
         q.headers["x-request-id"],
       );
+      span.setAttribute("fx.rate", String(quote.rate));
       if (
         quote.baseCurrency !== p.sourceCurrency ||
         quote.quoteCurrency !== p.destinationCurrency
@@ -288,10 +355,13 @@ export async function initiate(
         },
       });
     } catch (e: any) {
+      span.recordException(e);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: e.message });
       await prisma.transaction.update({
         where: { id: tx.id },
         data: { status: "FAILED", failureReason: e.code ?? e.message },
       });
+      span.end();
       return fail(
         r,
         e.status ?? 503,
@@ -300,7 +370,16 @@ export async function initiate(
       );
     }
   }
-  return r.code(201).send(await execute(tx, q.headers["x-request-id"]));
+  const result = await execute(tx, q.headers["x-request-id"]);
+  span.end();
+  return r.code(201).send(result);
+    } catch (e: any) {
+      span.recordException(e);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: e.message });
+      span.end();
+      throw e;
+    }
+  });
 }
 
 function fail(r: any, s: number, error: string, message: string) {

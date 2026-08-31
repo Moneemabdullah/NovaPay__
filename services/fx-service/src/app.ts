@@ -4,6 +4,7 @@ import { requestIdPlugin } from "./middlewares/request-id.js";
 import { httpMetricsHooks } from "./lib/metrics.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
+import { registerTracingHooks } from "./middlewares/tracing.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
@@ -11,6 +12,7 @@ export async function buildApp() {
   await requestIdPlugin(app);
   httpMetricsHooks(app);
   registerErrorHandler(app);
+  registerTracingHooks(app);
   await app.register(registerRoutes);
   return app;
 }
