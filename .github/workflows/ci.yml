@@ -130,11 +130,13 @@ jobs:
           TRANSACTION_SERVICE_URL: "http://localhost:19999"
 
       - name: Create test database for integration tests
+        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
         run: psql -h localhost -U test -d test -c "CREATE DATABASE \"${{ matrix.service }}_test\";" || true
         env:
           PGPASSWORD: test
 
       - name: Run Prisma migrations for integration tests
+        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
         working-directory: services/${{ matrix.service }}
         run: npx prisma migrate deploy
         env:
