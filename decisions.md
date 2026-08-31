@@ -132,6 +132,59 @@ Every `ledger_entries` row stores `entry_hash = sha256(prev_entry_hash + wallet_
 
 **Code path:** `ledger-service/src/services/ledger.service.ts:21-32, 133-144`
 
+## Double-Entry Ledger Invariant
+
+Every money movement writes exactly two `ledger_entries` rows (one debit, one credit) inside a single DB transaction (`prisma.$transaction`). The `validateBatch()` function checks that `SUM(debit) == SUM(credit)` per currency before any rows are written. If the totals don't match, the batch is rejected with `422 UNBALANCED_LEDGER_TRANSACTION`.
+
+The invariant is enforced at three levels:
+1. **Write-time validation** — `validateBatch()` rejects unbalanced entries before INSERT.
+2. **Runtime check** — `GET /ledger/invariant-check` runs `SUM(debit) - SUM(credit)` grouped by currency and exposes a Prometheus gauge (`ledger_invariant_violations`).
+3. **Audit verification** — `GET /ledger/audit/verify` recomputes the hash chain from the first entry to detect any historical tampering.
+
+**Code paths:**
+- Validation: `ledger-service/src/services/ledger.service.ts:36-73`
+- Invariant check: `ledger-service/src/services/ledger.service.ts:133-148`
+- Audit verify: `ledger-service/src/services/ledger.service.ts:150-162`
+- Metrics: `ledger-service/src/lib/metrics.ts` — `ledgerInvariantViolations` Counter
+
+## Observability
+
+**OpenTelemetry (distributed tracing):**
+All five services are instrumented with OTel traces that reach Jaeger. The implementation uses `@opentelemetry/sdk-node` with `NodeSDK` class and `SimpleSpanProcessor` for reliable span export via gRPC to `http://jaeger:4317`.
+
+- **HTTP-level spans:** Fastify `onRequest`/`onResponse` hooks create a span per incoming request (method, URL, status code). Registered via `registerTracingHooks(app)` in `api-gateway`, `account-service`, and `fx-service`.
+- **Business-level spans:** `transaction-service` creates manual spans for `transaction.initiate`, `transaction.execute`, `debit.sender`, `ledger.createBatch`, and `credit.recipient`. `ledger-service` creates a span for `ledger.createBatch`.
+- **Error recording:** All spans record exceptions via `span.recordException(e)` and set `SpanStatusCode.ERROR` on failure.
+- **Diagnostic logging:** `fx-service` logs `[otel] Tracer initialized successfully` and `[otel] Tracer type: ProxyTracer` to verify the SDK is working.
+
+**Prometheus metrics:**
+HTTP request duration histograms, transaction counters, ledger invariant violations, and FX provider failures are exposed at `/metrics` on each service.
+
+**Grafana:**
+Provisioned dashboards and alerting rules for all services.
+
+**Code paths:**
+- OTel init: `services/*/src/lib/otel.ts` (each service)
+- Tracing hooks: `services/api-gateway/src/middlewares/tracing.ts`, `services/account-service/src/middlewares/tracing.ts`, `services/fx-service/src/middlewares/tracing.ts`
+- Manual spans: `services/transaction-service/src/services/transaction.service.ts`, `services/ledger-service/src/services/ledger.service.ts`
+
+## CI/CD Pipeline
+
+GitHub Actions workflow (`.github/workflows/ci.yml`) with a strict gate:
+
+1. **Path detection** — `dorny/paths-filter@v4` identifies which services changed; only those services run in the matrix.
+2. **Per-service matrix** — `npm ci` → unit tests → integration tests (against GitHub Actions Postgres/Redis service containers) → TypeScript typecheck → version bump validation → Docker build.
+3. **Prisma-conditional migration** — `hashFiles(format('services/{0}/prisma.config.ts', matrix.service))` condition skips DB migration steps for non-Prisma services (e.g., `api-gateway`).
+4. **`ci-status` gate job** — `if: always()` single required check that fails if any matrix job fails. Ensures branch protection works without listing every matrix entry.
+
+**Design decisions:**
+- Node 20 (not 22) for Prisma 6.x compatibility.
+- `prisma@6.19.3` pinned across all services.
+- `prisma migrate deploy` (not `migrate dev`) for CI — idempotent, no interactive prompts.
+- Integration tests run only when the service's source files change (path filter on `services/<name>/**`).
+
+**Code path:** `.github/workflows/ci.yml`
+
 ## Tradeoffs Made Under Time Pressure
 
 - Static FX rate table instead of a live provider integration
@@ -139,7 +192,6 @@ Every `ledger_entries` row stores `entry_hash = sha256(prev_entry_hash + wallet_
 - No mTLS between services
 - No dead-letter queue for payroll items that exhaust BullMQ retries
 - Field-level encryption encrypts on write but decryption utility not yet wired into read paths
-- OpenTelemetry infrastructure (Jaeger) deployed but application-level instrumentation not yet added
 
 ## What We'd Add Before Production
 
@@ -148,5 +200,5 @@ Every `ledger_entries` row stores `entry_hash = sha256(prev_entry_hash + wallet_
 - Per-service independent Postgres instances instead of one shared instance with per-service databases
 - Dead-letter queue handling for payroll items that exhaust BullMQ retry attempts
 - Chaos testing for the FX-provider-down and ledger-service-down scenarios
-- OpenTelemetry auto-instrumentation for distributed tracing
 - Decryption utility for PII read paths
+- Live FX provider integration with circuit breaker

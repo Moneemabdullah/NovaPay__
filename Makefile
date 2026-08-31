@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-COMPOSE := docker compose
+COMPOSE := docker compose -f infra/docker-compose.yml
 SERVICES := account transaction ledger fx payroll admin api-gateway
 DB_SERVICES := account transaction ledger fx payroll admin
 
