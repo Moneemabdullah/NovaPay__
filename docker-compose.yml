@@ -7,6 +7,7 @@
 
 x-node-env: &node-env
   NODE_ENV: development
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
 
 services:
   postgres:
@@ -45,6 +46,7 @@ services:
     build: ./services/api-gateway
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: api-gateway
       PORT: 3000
       ACCOUNT_SERVICE_URL: http://account-service:3001
       TRANSACTION_SERVICE_URL: http://transaction-service:3002
@@ -62,11 +64,12 @@ services:
 
   account-service:
     build: ./services/account-service
-    env_file: ./services/account-service/.env
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: account-service
       PORT: 3001
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/account_db
+      FIELD_ENCRYPTION_KEK: novapay-local-dev-encryption-kek-2024
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,6 +78,7 @@ services:
     build: ./services/transaction-service
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: transaction-service
       PORT: 3002
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/transaction_db
       ACCOUNT_SERVICE_URL: http://account-service:3001
@@ -88,6 +92,7 @@ services:
     build: ./services/ledger-service
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: ledger-service
       PORT: 3003
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/ledger_db
     depends_on:
@@ -98,6 +103,7 @@ services:
     build: ./services/fx-service
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: fx-service
       PORT: 3004
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/fx_db
       FX_PROVIDER_DOWN: "false"
@@ -107,12 +113,12 @@ services:
 
   payroll-service:
     build: ./services/payroll-service
-    env_file: ./services/payroll-service/.env
     environment:
       <<: *node-env
       PORT: 3005
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/payroll_db
       REDIS_URL: redis://redis:6379
+      QUEUE_NAME: payroll
       TRANSACTION_SERVICE_URL: http://transaction-service:3002
     depends_on:
       postgres:

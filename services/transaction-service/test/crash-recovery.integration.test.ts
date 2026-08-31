@@ -84,6 +84,8 @@ describe("crash recovery (integration)", () => {
     account.state.appliedOps.filter((op) => op.endsWith(suffix)).length;
 
   beforeAll(async () => {
+    await prisma.transaction.deleteMany({});
+    await prisma.idempotencyKey.deleteMany({});
     account = startAccountMock();
     ledger = startLedgerMock();
     await Promise.all([account.start(), ledger.start()]);

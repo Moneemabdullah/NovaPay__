@@ -72,6 +72,29 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     strategy:
       fail-fast: false
       matrix:
@@ -98,6 +121,33 @@ jobs:
         run: npm test
         env:
           DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
+          ACCOUNT_SERVICE_URL: "http://localhost:19999"
+          LEDGER_SERVICE_URL: "http://localhost:19999"
+          FX_SERVICE_URL: "http://localhost:19999"
+          REDIS_URL: "redis://localhost:6379"
+          QUEUE_NAME: "test-queue"
+          TRANSACTION_SERVICE_URL: "http://localhost:19999"
+
+      - name: Create test database for integration tests
+        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
+        run: psql -h localhost -U test -d test -c "CREATE DATABASE \"${{ matrix.service }}_test\";" || true
+        env:
+          PGPASSWORD: test
+
+      - name: Run Prisma migrations for integration tests
+        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
+        working-directory: services/${{ matrix.service }}
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/${{ matrix.service }}_test"
+
+      - name: Run integration tests
+        if: hashFiles(format('services/{0}/vitest.integration.config.ts', matrix.service)) != ''
+        working-directory: services/${{ matrix.service }}
+        run: npm run test:integration
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/${{ matrix.service }}_test"
           FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
           ACCOUNT_SERVICE_URL: "http://localhost:19999"
           LEDGER_SERVICE_URL: "http://localhost:19999"

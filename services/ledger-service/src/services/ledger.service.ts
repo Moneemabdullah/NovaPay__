@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { type LedgerEntry, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { ledgerInvariantViolations } from "../lib/metrics.js";
+import { getTracer } from "../lib/otel.js";
+import { SpanStatusCode } from "@opentelemetry/api";
 
 export type LedgerEntryInput = {
   accountId: string;
@@ -74,35 +76,50 @@ export async function createBatch(input: {
   transactionId: string;
   entries: LedgerEntryInput[];
 }) {
-  return prisma.$transaction(async (tx) => {
-    const replay = await tx.ledgerTransaction.findUnique({
-      where: { transactionId: input.transactionId },
-    });
-    if (replay) return { ledgerTransactionId: replay.id, replayed: true };
-    const transaction = await tx.ledgerTransaction.create({
-      data: { transactionId: input.transactionId },
-    });
-    const last = await tx.ledgerEntry.findFirst({ orderBy: { id: "desc" } });
-    let previous = last?.entryHash ?? null;
-    for (const entry of input.entries) {
-      const timestamp = new Date().toISOString();
-      const entryHash = hash(previous, entry, timestamp);
-      await tx.ledgerEntry.create({
-        data: {
-          ledgerTransactionId: transaction.id,
-          accountId: entry.accountId,
-          direction: entry.direction,
-          amountCents: BigInt(entry.amountCents),
-          currency: entry.currency,
-          fxRate: entry.fxRate ? new Prisma.Decimal(entry.fxRate) : undefined,
-          prevHash: previous,
-          entryHash,
-          createdAt: new Date(timestamp),
-        },
+  const tracer = getTracer();
+  return tracer.startActiveSpan("ledger.createBatch", async (span) => {
+    try {
+      span.setAttribute("ledger.transaction_id", input.transactionId);
+      span.setAttribute("ledger.entry_count", input.entries.length);
+      const result = await prisma.$transaction(async (tx) => {
+        const replay = await tx.ledgerTransaction.findUnique({
+          where: { transactionId: input.transactionId },
+        });
+        if (replay) return { ledgerTransactionId: replay.id, replayed: true };
+        const transaction = await tx.ledgerTransaction.create({
+          data: { transactionId: input.transactionId },
+        });
+        const last = await tx.ledgerEntry.findFirst({ orderBy: { id: "desc" } });
+        let previous = last?.entryHash ?? null;
+        for (const entry of input.entries) {
+          const timestamp = new Date().toISOString();
+          const entryHash = hash(previous, entry, timestamp);
+          await tx.ledgerEntry.create({
+            data: {
+              ledgerTransactionId: transaction.id,
+              accountId: entry.accountId,
+              direction: entry.direction,
+              amountCents: BigInt(entry.amountCents),
+              currency: entry.currency,
+              fxRate: entry.fxRate ? new Prisma.Decimal(entry.fxRate) : undefined,
+              prevHash: previous,
+              entryHash,
+              createdAt: new Date(timestamp),
+            },
+          });
+          previous = entryHash;
+        }
+        return { ledgerTransactionId: transaction.id };
       });
-      previous = entryHash;
+      span.setAttribute("ledger.replayed", result.replayed ?? false);
+      span.end();
+      return result;
+    } catch (e: any) {
+      span.recordException(e);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: e.message });
+      span.end();
+      throw e;
     }
-    return { ledgerTransactionId: transaction.id };
   });
 }
 
