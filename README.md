@@ -89,6 +89,19 @@ cd services/transaction-service
 npm run test:integration
 ```
 
+## API Documentation
+
+Interactive Swagger UI is available when the stack is running:
+
+1. Start the NovaPay stack:
+   ```bash
+   docker compose -f infra/docker-compose.yml up --build -d
+   ```
+2. Open Swagger UI at: **http://localhost:8080/docs**
+3. The raw OpenAPI 3.0 JSON is available at: **http://localhost:8080/docs/json**
+
+Swagger UI lets you browse all gateway endpoints, view request/response schemas, and execute requests directly from the browser.
+
 ## API Endpoint Summary
 
 All endpoints are accessed through the API gateway at `http://localhost:8080`.
