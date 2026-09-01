@@ -32,3 +32,8 @@ scrape_configs:
   - job_name: "admin-service"
     static_configs:
       - targets: ["admin-service:3006"]
+
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    scrape_interval: 15s

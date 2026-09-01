@@ -6,7 +6,7 @@ import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks";
 
 const OTEL_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://jaeger:4317";
-const SERVICE_NAME = process.env.OTEL_SERVICE_NAME || "api-gateway";
+const SERVICE_NAME = process.env.OTEL_SERVICE_NAME || "admin-service";
 
 let initialized = false;
 

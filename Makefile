@@ -70,8 +70,12 @@ integration-test:
 	@for s in $(SERVICES); do \
 		d="services/$$s-service"; \
 		[ -d "$$d" ] || d="services/$$s"; \
-		echo "==> vitest: $$s"; \
-		(cd "$$d" && npx vitest run --config vitest.integration.config.ts) || exit 1; \
+		if [ -f "$$d/vitest.integration.config.ts" ]; then \
+			echo "==> vitest integration: $$s"; \
+			(cd "$$d" && npx vitest run --config vitest.integration.config.ts) || exit 1; \
+		else \
+			echo "==> vitest integration: $$s — skipped (no integration config)"; \
+		fi; \
 	done
 
 # ── Development targets ─────────────────────────────────────────────────────

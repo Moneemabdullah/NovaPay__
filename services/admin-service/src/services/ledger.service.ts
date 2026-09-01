@@ -1,9 +1,14 @@
+import { context, propagation } from "@opentelemetry/api";
 import { envVars } from "../config/env.utils.js";
 
 export function checkLedgerInvariant() {
-  return fetch(`${envVars.LEDGER_SERVICE_URL}/invariant-check`);
+  const headers: Record<string, string> = {};
+  propagation.inject(context.active(), headers);
+  return fetch(`${envVars.LEDGER_SERVICE_URL}/invariant-check`, { headers });
 }
 
 export function verifyAudit() {
-  return fetch(`${envVars.LEDGER_SERVICE_URL}/audit/verify`);
+  const headers: Record<string, string> = {};
+  propagation.inject(context.active(), headers);
+  return fetch(`${envVars.LEDGER_SERVICE_URL}/audit/verify`, { headers });
 }

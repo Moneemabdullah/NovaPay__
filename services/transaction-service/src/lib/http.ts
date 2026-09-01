@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { context, propagation } from "@opentelemetry/api";
 import { envVars } from "../config/env.utils.js";
 
 export const canonical = (x: any): string =>
@@ -14,12 +15,14 @@ export const sha = (x: any) =>
   crypto.createHash("sha256").update(canonical(x)).digest("hex");
 
 export async function post(base: string, path: string, body: any, id?: string) {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-request-id": id ?? crypto.randomUUID(),
+  };
+  propagation.inject(context.active(), headers);
   const r = await fetch(base + path, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-request-id": id ?? crypto.randomUUID(),
-    },
+    headers,
     body: JSON.stringify(body),
   });
   const d = await r.json().catch(() => ({}));
@@ -32,9 +35,11 @@ export async function post(base: string, path: string, body: any, id?: string) {
 }
 
 export async function get(base: string, path: string, id?: string) {
-  const r = await fetch(base + path, {
-    headers: { "x-request-id": id ?? crypto.randomUUID() },
-  });
+  const headers: Record<string, string> = {
+    "x-request-id": id ?? crypto.randomUUID(),
+  };
+  propagation.inject(context.active(), headers);
+  const r = await fetch(base + path, { headers });
   if (r.status === 404) return null;
   const d = await r.json().catch(() => ({}));
   if (!r.ok)
