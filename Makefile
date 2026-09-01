@@ -1,9 +1,11 @@
 SHELL := /bin/bash
 COMPOSE := docker compose -f infra/docker-compose.yml
+DEV_COMPOSE := docker compose -f infra/docker-compose.dev.yml
 SERVICES := account transaction ledger fx payroll admin api-gateway
 DB_SERVICES := account transaction ledger fx payroll admin
 
-.PHONY: help up down logs ps build migrate generate test init-db
+.PHONY: help up down logs ps build migrate generate test init-db \
+        dev-up dev-down dev-logs dev-ps dev-build
 
 help:
 	@echo "NovaPay — easy-run targets:"
