@@ -1,0 +1,328 @@
+# =============================================================================
+# NovaPay — Development Compose
+# =============================================================================
+# Fast local development without rebuilding production images.
+#
+# Usage:
+#   make dev-up        Build deps (once) + start the dev stack
+#   make dev-down      Stop and remove dev containers
+#   make dev-logs      Tail dev logs
+#   make dev-ps        Show dev containers
+#   make dev-build     Rebuild deps only (after package.json changes)
+#
+# How it works:
+#   - An init container installs npm dependencies into named volumes (once).
+#   - App containers mount source code via bind mount for live editing.
+#   - Named volumes for node_modules and .prisma persist across restarts.
+#   - No production Dockerfiles are used; all services run on node:20-alpine.
+#   - Monitoring stack (Prometheus, Grafana, Jaeger) is excluded for speed.
+# =============================================================================
+
+x-node-env: &node-env
+  NODE_ENV: development
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+
+services:
+  # ── Infrastructure ────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: novapay
+      POSTGRES_PASSWORD: novapay
+      POSTGRES_MULTIPLE_DATABASES: "account_db,transaction_db,ledger_db,fx_db,payroll_db,admin_db"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../scripts/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novapay"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      api-gateway:
+        condition: service_started
+
+  # ── Dependency Installer (runs once per package-lock.json change) ──────────
+
+  deps:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      PRISMA_GENERATE_SKIP_AUTOGENERATION: "true"
+    volumes:
+      - ../services/api-gateway/package.json:/srv/api-gateway/package.json:ro
+      - ../services/api-gateway/package-lock.json:/srv/api-gateway/package-lock.json:ro
+      - ../services/account-service/package.json:/srv/account-service/package.json:ro
+      - ../services/account-service/package-lock.json:/srv/account-service/package-lock.json:ro
+      - ../services/account-service/prisma.config.ts:/srv/account-service/prisma.config.ts:ro
+      - ../services/account-service/prisma/schema:/srv/account-service/prisma/schema:ro
+      - ../services/transaction-service/package.json:/srv/transaction-service/package.json:ro
+      - ../services/transaction-service/package-lock.json:/srv/transaction-service/package-lock.json:ro
+      - ../services/transaction-service/prisma.config.ts:/srv/transaction-service/prisma.config.ts:ro
+      - ../services/transaction-service/prisma/schema:/srv/transaction-service/prisma/schema:ro
+      - ../services/ledger-service/package.json:/srv/ledger-service/package.json:ro
+      - ../services/ledger-service/package-lock.json:/srv/ledger-service/package-lock.json:ro
+      - ../services/ledger-service/prisma.config.ts:/srv/ledger-service/prisma.config.ts:ro
+      - ../services/ledger-service/prisma/schema:/srv/ledger-service/prisma/schema:ro
+      - ../services/fx-service/package.json:/srv/fx-service/package.json:ro
+      - ../services/fx-service/package-lock.json:/srv/fx-service/package-lock.json:ro
+      - ../services/fx-service/prisma.config.ts:/srv/fx-service/prisma.config.ts:ro
+      - ../services/fx-service/prisma/schema:/srv/fx-service/prisma/schema:ro
+      - ../services/payroll-service/package.json:/srv/payroll-service/package.json:ro
+      - ../services/payroll-service/package-lock.json:/srv/payroll-service/package-lock.json:ro
+      - ../services/payroll-service/prisma.config.ts:/srv/payroll-service/prisma.config.ts:ro
+      - ../services/payroll-service/prisma/schema:/srv/payroll-service/prisma/schema:ro
+      - ../services/admin-service/package.json:/srv/admin-service/package.json:ro
+      - ../services/admin-service/package-lock.json:/srv/admin-service/package-lock.json:ro
+      - ../services/admin-service/prisma.config.ts:/srv/admin-service/prisma.config.ts:ro
+      - ../services/admin-service/prisma/schema:/srv/admin-service/prisma/schema:ro
+      # Named volumes — init writes deps here; app containers read from here
+      - gw-node-modules:/app/node_modules
+      - gw-prisma:/app/.prisma
+      - acct-node-modules:/app/node_modules
+      - acct-prisma:/app/.prisma
+      - txn-node-modules:/app/node_modules
+      - txn-prisma:/app/.prisma
+      - ledger-node-modules:/app/node_modules
+      - ledger-prisma:/app/.prisma
+      - fx-node-modules:/app/node_modules
+      - fx-prisma:/app/.prisma
+      - payroll-node-modules:/app/node_modules
+      - payroll-prisma:/app/.prisma
+      - admin-node-modules:/app/node_modules
+      - admin-prisma:/app/.prisma
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        LOCK_HASH=$$(md5sum /srv/*/package-lock.json 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+        MARKER="/app/.deps-installed"
+
+        if [ -f "$$MARKER" ] && [ "$$(cat $$MARKER)" = "$$LOCK_HASH" ]; then
+          echo "==> Dependencies up to date — skipping npm ci"
+          exit 0
+        fi
+
+        echo "==> Installing dependencies..."
+
+        install_deps() {
+          local svc="$$1"
+          echo "  npm ci: $$svc"
+          cd "/srv/$$svc" && npm ci
+          cp -a /srv/$$svc/node_modules/. /app/node_modules/
+          if [ -f "/srv/$$svc/prisma.config.ts" ]; then
+            echo "  prisma generate: $$svc"
+            cd /app && npx prisma generate
+            cp -a /app/node_modules/.prisma/. /app/.prisma/ 2>/dev/null || true
+          fi
+        }
+
+        install_deps api-gateway
+        install_deps account-service
+        install_deps transaction-service
+        install_deps ledger-service
+        install_deps fx-service
+        install_deps payroll-service
+        install_deps admin-service
+
+        echo "$$LOCK_HASH" > "$$MARKER"
+        echo "==> Dependencies installed"
+
+  # ── Application Services ──────────────────────────────────────────────────
+
+  api-gateway:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npm run start"]
+    environment:
+      <<: *node-env
+      OTEL_SERVICE_NAME: api-gateway
+      PORT: 3000
+      ACCOUNT_SERVICE_URL: http://account-service:3001
+      TRANSACTION_SERVICE_URL: http://transaction-service:3002
+      LEDGER_SERVICE_URL: http://ledger-service:3003
+      FX_SERVICE_URL: http://fx-service:3004
+      PAYROLL_SERVICE_URL: http://payroll-service:3005
+      ADMIN_SERVICE_URL: http://admin-service:3006
+    volumes:
+      - ../services/api-gateway/src:/app/src:ro
+      - gw-node-modules:/app/node_modules
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      account-service:
+        condition: service_started
+      transaction-service:
+        condition: service_started
+      ledger-service:
+        condition: service_started
+      fx-service:
+        condition: service_started
+      payroll-service:
+        condition: service_started
+      admin-service:
+        condition: service_started
+
+  account-service:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
+    environment:
+      <<: *node-env
+      OTEL_SERVICE_NAME: account-service
+      PORT: 3001
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/account_db
+      FIELD_ENCRYPTION_KEK: novapay-local-dev-encryption-kek-2024
+    volumes:
+      - ../services/account-service/src:/app/src:ro
+      - ../services/account-service/prisma:/app/prisma:ro
+      - acct-node-modules:/app/node_modules
+      - acct-prisma:/app/.prisma
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  transaction-service:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
+    environment:
+      <<: *node-env
+      OTEL_SERVICE_NAME: transaction-service
+      PORT: 3002
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/transaction_db
+      ACCOUNT_SERVICE_URL: http://account-service:3001
+      LEDGER_SERVICE_URL: http://ledger-service:3003
+      FX_SERVICE_URL: http://fx-service:3004
+    volumes:
+      - ../services/transaction-service/src:/app/src:ro
+      - ../services/transaction-service/prisma:/app/prisma:ro
+      - txn-node-modules:/app/node_modules
+      - txn-prisma:/app/.prisma
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  ledger-service:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
+    environment:
+      <<: *node-env
+      OTEL_SERVICE_NAME: ledger-service
+      PORT: 3003
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/ledger_db
+    volumes:
+      - ../services/ledger-service/src:/app/src:ro
+      - ../services/ledger-service/prisma:/app/prisma:ro
+      - ledger-node-modules:/app/node_modules
+      - ledger-prisma:/app/.prisma
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  fx-service:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
+    environment:
+      <<: *node-env
+      OTEL_SERVICE_NAME: fx-service
+      PORT: 3004
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/fx_db
+      FX_PROVIDER_DOWN: "false"
+    volumes:
+      - ../services/fx-service/src:/app/src:ro
+      - ../services/fx-service/prisma:/app/prisma:ro
+      - fx-node-modules:/app/node_modules
+      - fx-prisma:/app/.prisma
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  payroll-service:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
+    environment:
+      <<: *node-env
+      PORT: 3005
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/payroll_db
+      REDIS_URL: redis://redis:6379
+      QUEUE_NAME: payroll
+      TRANSACTION_SERVICE_URL: http://transaction-service:3002
+    volumes:
+      - ../services/payroll-service/src:/app/src:ro
+      - ../services/payroll-service/prisma:/app/prisma:ro
+      - payroll-node-modules:/app/node_modules
+      - payroll-prisma:/app/.prisma
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  admin-service:
+    image: node:20-alpine
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
+    environment:
+      <<: *node-env
+      PORT: 3006
+      DATABASE_URL: postgres://novapay:novapay@postgres:5432/admin_db
+      LEDGER_SERVICE_URL: http://ledger-service:3003
+    volumes:
+      - ../services/admin-service/src:/app/src:ro
+      - ../services/admin-service/prisma:/app/prisma:ro
+      - admin-node-modules:/app/node_modules
+      - admin-prisma:/app/.prisma
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  # ── Observability (lightweight) ────────────────────────────────────────────
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+
+volumes:
+  pgdata:
+  gw-node-modules:
+  gw-prisma:
+  acct-node-modules:
+  acct-prisma:
+  txn-node-modules:
+  txn-prisma:
+  ledger-node-modules:
+  ledger-prisma:
+  fx-node-modules:
+  fx-prisma:
+  payroll-node-modules:
+  payroll-prisma:
+  admin-node-modules:
+  admin-prisma:
