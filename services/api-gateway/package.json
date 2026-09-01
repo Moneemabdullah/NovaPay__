@@ -1,6 +1,6 @@
 {
   "name": "api-gateway",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "private": true,
   "scripts": {
@@ -11,6 +11,8 @@
   "dependencies": {
     "@fastify/helmet": "^13.1.1",
     "@fastify/http-proxy": "^11.6.1",
+    "@fastify/swagger": "^9.8.1",
+    "@fastify/swagger-ui": "^5.2.6",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-trace-otlp-grpc": "^0.221.0",
     "@opentelemetry/instrumentation-http": "^0.221.0",

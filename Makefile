@@ -7,16 +7,16 @@ DB_SERVICES := account transaction ledger fx payroll admin
 
 help:
 	@echo "NovaPay — easy-run targets:"
-	@echo "  make up         Build + start the full stack (Postgres, Redis, all services, gateway, monitoring)"
-	@echo "  make down       Stop and remove all containers"
-	@echo "  make logs       Tail logs from all containers"
-	@echo "  make ps         Show running containers"
-	@echo "  make build      Build all images without starting"
-	@echo "  make init-db    Start only the infra DBs (Postgres + Redis)"
-	@echo "  make migrate    Apply Prisma migrations to each service DB"
-	@echo "  make generate   Run prisma generate in each DB service"
-	@echo "  make test       Run the vitest suite in every service"
-
+	@echo "  make up         		Build + start the full stack (Postgres, Redis, all services, gateway, monitoring)"
+	@echo "  make down      		Stop and remove all containers"
+	@echo "  make logs      		Tail logs from all containers"
+	@echo "  make ps         		Show running containers"
+	@echo "  make build      		Build all images without starting"
+	@echo "  make init-db    		Start only the infra DBs (Postgres + Redis)"
+	@echo "  make migrate    		Apply Prisma migrations to each service DB"
+	@echo "  make generate   		Run prisma generate in each DB service"
+	@echo "  make test       		Run the vitest suite in every service"
+	@echo "  make integration-test  	Run the integration tests in every service"
 up:
 	$(COMPOSE) up -d --build
 
@@ -53,4 +53,12 @@ test:
 		[ -d "$$d" ] || d="services/$$s"; \
 		echo "==> vitest: $$s"; \
 		(cd "$$d" && npx vitest run) || exit 1; \
+	done
+
+integration-test:
+	@for s in $(SERVICES); do \
+		d="services/$$s-service"; \
+		[ -d "$$d" ] || d="services/$$s"; \
+		echo "==> vitest: $$s"; \
+		(cd "$$d" && npx vitest run --config vitest.integration.config.ts) || exit 1; \
 	done

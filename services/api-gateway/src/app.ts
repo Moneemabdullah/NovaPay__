@@ -7,6 +7,7 @@ import { httpMetricsHooks } from "./lib/metrics.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 import { registerTracingHooks } from "./middlewares/tracing.js";
+import { registerSwagger } from "./plugins/swagger.js";
 
 const routes: { prefix: string; upstream: string; rewritePrefix: string }[] = [
   { prefix: "/accounts", upstream: envVars.ACCOUNT_SERVICE_URL, rewritePrefix: "/" },
@@ -28,6 +29,7 @@ export async function buildApp() {
   httpMetricsHooks(app);
   registerErrorHandler(app);
   registerTracingHooks(app);
+  await app.register(registerSwagger);
   await app.register(registerRoutes);
 
   for (const { prefix, upstream, rewritePrefix } of routes) {
