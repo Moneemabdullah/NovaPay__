@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import proxy from "@fastify/http-proxy";
 import helmet from "@fastify/helmet";
+import { propagation } from "@opentelemetry/api";
 import { envVars } from "./config/env.utils.js";
 import { requestIdPlugin } from "./middlewares/request-id.js";
 import { httpMetricsHooks } from "./lib/metrics.js";
@@ -37,6 +38,12 @@ export async function buildApp() {
       upstream,
       prefix,
       rewritePrefix,
+      preHandler: async (request) => {
+        const ctx = (request as any)._otelContext;
+        if (ctx) {
+          propagation.inject(ctx, request.headers);
+        }
+      },
     });
   }
 

@@ -1,16 +1,25 @@
 import type { FastifyInstance } from "fastify";
+import { context, propagation, trace } from "@opentelemetry/api";
 import { getTracer } from "../lib/otel.js";
 
 export function registerTracingHooks(app: FastifyInstance) {
   app.addHook("onRequest", async (request) => {
     const tracer = getTracer();
-    const span = tracer.startSpan(`${request.method} ${request.routeOptions?.url || request.url}`, {
-      attributes: {
-        "http.method": request.method,
-        "http.url": request.url,
+    const extractedContext = propagation.extract(context.active(), request.headers);
+    const span = tracer.startSpan(
+      `${request.method} ${request.routeOptions?.url || request.url}`,
+      {
+        attributes: {
+          "http.method": request.method,
+          "http.url": request.url,
+          "http.target": request.url,
+          "net.peer.ip": request.ip,
+        },
       },
-    });
+      extractedContext,
+    );
     (request as any)._otelSpan = span;
+    (request as any)._otelContext = trace.setSpan(extractedContext, span);
   });
 
   app.addHook("onResponse", async (request, reply) => {

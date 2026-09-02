@@ -15,8 +15,19 @@
 #   - App containers mount source code via bind mount for live editing.
 #   - Named volumes for node_modules and .prisma persist across restarts.
 #   - No production Dockerfiles are used; all services run on node:20-alpine.
-#   - Monitoring stack (Prometheus, Grafana, Jaeger) is excluded for speed.
+#   - Monitoring stack (Prometheus, Grafana) is excluded by default for speed.
+#     Use --profile monitoring to include Prometheus + Grafana + cAdvisor.
+#
+# Network isolation:
+#   This stack uses project name "novapay-dev" (via `name:` below) so its
+#   containers and network never collide with the infra/assessment stack
+#   (which uses project name "infra" by default from its directory).
+#
+#   To run monitoring against dev services:
+#     docker compose -f infra/docker-compose.dev.yml --profile monitoring up -d
 # =============================================================================
+
+name: novapay-dev
 
 x-node-env: &node-env
   NODE_ENV: development
@@ -35,7 +46,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ../scripts/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U novapay"]
       interval: 5s
@@ -45,14 +56,14 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   nginx:
     image: nginx:1.27-alpine
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
-      - "8080:8080"
+      - "8083:8080"
     depends_on:
       api-gateway:
         condition: service_started
@@ -61,7 +72,6 @@ services:
 
   deps:
     image: node:20-alpine
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       PRISMA_GENERATE_SKIP_AUTOGENERATION: "true"
     volumes:
@@ -92,27 +102,20 @@ services:
       - ../services/admin-service/prisma.config.ts:/srv/admin-service/prisma.config.ts:ro
       - ../services/admin-service/prisma/schema:/srv/admin-service/prisma/schema:ro
       # Named volumes — init writes deps here; app containers read from here
-      - gw-node-modules:/app/node_modules
-      - gw-prisma:/app/.prisma
-      - acct-node-modules:/app/node_modules
-      - acct-prisma:/app/.prisma
-      - txn-node-modules:/app/node_modules
-      - txn-prisma:/app/.prisma
-      - ledger-node-modules:/app/node_modules
-      - ledger-prisma:/app/.prisma
-      - fx-node-modules:/app/node_modules
-      - fx-prisma:/app/.prisma
-      - payroll-node-modules:/app/node_modules
-      - payroll-prisma:/app/.prisma
-      - admin-node-modules:/app/node_modules
-      - admin-prisma:/app/.prisma
+      - gw-node-modules:/deps/gw/node_modules
+      - acct-node-modules:/deps/acct/node_modules
+      - txn-node-modules:/deps/txn/node_modules
+      - ledger-node-modules:/deps/ledger/node_modules
+      - fx-node-modules:/deps/fx/node_modules
+      - payroll-node-modules:/deps/payroll/node_modules
+      - admin-node-modules:/deps/admin/node_modules
     command:
       - /bin/sh
       - -c
       - |
         set -e
         LOCK_HASH=$$(md5sum /srv/*/package-lock.json 2>/dev/null | sort | md5sum | cut -d' ' -f1)
-        MARKER="/app/.deps-installed"
+        MARKER="/tmp/.deps-installed"
 
         if [ -f "$$MARKER" ] && [ "$$(cat $$MARKER)" = "$$LOCK_HASH" ]; then
           echo "==> Dependencies up to date — skipping npm ci"
@@ -123,23 +126,24 @@ services:
 
         install_deps() {
           local svc="$$1"
+          local vol="$$2"
           echo "  npm ci: $$svc"
           cd "/srv/$$svc" && npm ci
-          cp -a /srv/$$svc/node_modules/. /app/node_modules/
+          mkdir -p "/deps/$$vol/node_modules"
+          cp -a /srv/$$svc/node_modules/. "/deps/$$vol/node_modules/"
           if [ -f "/srv/$$svc/prisma.config.ts" ]; then
             echo "  prisma generate: $$svc"
-            cd /app && npx prisma generate
-            cp -a /app/node_modules/.prisma/. /app/.prisma/ 2>/dev/null || true
+            cd "/srv/$$svc" && npx prisma generate
           fi
         }
 
-        install_deps api-gateway
-        install_deps account-service
-        install_deps transaction-service
-        install_deps ledger-service
-        install_deps fx-service
-        install_deps payroll-service
-        install_deps admin-service
+        install_deps api-gateway gw
+        install_deps account-service acct
+        install_deps transaction-service txn
+        install_deps ledger-service ledger
+        install_deps fx-service fx
+        install_deps payroll-service payroll
+        install_deps admin-service admin
 
         echo "$$LOCK_HASH" > "$$MARKER"
         echo "==> Dependencies installed"
@@ -148,6 +152,7 @@ services:
 
   api-gateway:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npm run start"]
     environment:
       <<: *node-env
@@ -160,6 +165,7 @@ services:
       PAYROLL_SERVICE_URL: http://payroll-service:3005
       ADMIN_SERVICE_URL: http://admin-service:3006
     volumes:
+      - ../services/api-gateway/package.json:/app/package.json:ro
       - ../services/api-gateway/src:/app/src:ro
       - gw-node-modules:/app/node_modules
     depends_on:
@@ -180,6 +186,7 @@ services:
 
   account-service:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
     environment:
       <<: *node-env
@@ -188,10 +195,11 @@ services:
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/account_db
       FIELD_ENCRYPTION_KEK: novapay-local-dev-encryption-kek-2024
     volumes:
+      - ../services/account-service/package.json:/app/package.json:ro
+      - ../services/account-service/prisma.config.ts:/app/prisma.config.ts:ro
       - ../services/account-service/src:/app/src:ro
       - ../services/account-service/prisma:/app/prisma:ro
       - acct-node-modules:/app/node_modules
-      - acct-prisma:/app/.prisma
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -200,6 +208,7 @@ services:
 
   transaction-service:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
     environment:
       <<: *node-env
@@ -210,10 +219,11 @@ services:
       LEDGER_SERVICE_URL: http://ledger-service:3003
       FX_SERVICE_URL: http://fx-service:3004
     volumes:
+      - ../services/transaction-service/package.json:/app/package.json:ro
+      - ../services/transaction-service/prisma.config.ts:/app/prisma.config.ts:ro
       - ../services/transaction-service/src:/app/src:ro
       - ../services/transaction-service/prisma:/app/prisma:ro
       - txn-node-modules:/app/node_modules
-      - txn-prisma:/app/.prisma
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -222,6 +232,7 @@ services:
 
   ledger-service:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
     environment:
       <<: *node-env
@@ -229,10 +240,11 @@ services:
       PORT: 3003
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/ledger_db
     volumes:
+      - ../services/ledger-service/package.json:/app/package.json:ro
+      - ../services/ledger-service/prisma.config.ts:/app/prisma.config.ts:ro
       - ../services/ledger-service/src:/app/src:ro
       - ../services/ledger-service/prisma:/app/prisma:ro
       - ledger-node-modules:/app/node_modules
-      - ledger-prisma:/app/.prisma
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -241,6 +253,7 @@ services:
 
   fx-service:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
     environment:
       <<: *node-env
@@ -249,10 +262,11 @@ services:
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/fx_db
       FX_PROVIDER_DOWN: "false"
     volumes:
+      - ../services/fx-service/package.json:/app/package.json:ro
+      - ../services/fx-service/prisma.config.ts:/app/prisma.config.ts:ro
       - ../services/fx-service/src:/app/src:ro
       - ../services/fx-service/prisma:/app/prisma:ro
       - fx-node-modules:/app/node_modules
-      - fx-prisma:/app/.prisma
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -261,19 +275,22 @@ services:
 
   payroll-service:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: payroll-service
       PORT: 3005
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/payroll_db
       REDIS_URL: redis://redis:6379
       QUEUE_NAME: payroll
       TRANSACTION_SERVICE_URL: http://transaction-service:3002
     volumes:
+      - ../services/payroll-service/package.json:/app/package.json:ro
+      - ../services/payroll-service/prisma.config.ts:/app/prisma.config.ts:ro
       - ../services/payroll-service/src:/app/src:ro
       - ../services/payroll-service/prisma:/app/prisma:ro
       - payroll-node-modules:/app/node_modules
-      - payroll-prisma:/app/.prisma
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -284,17 +301,20 @@ services:
 
   admin-service:
     image: node:20-alpine
+    working_dir: /app
     entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && npm run start"]
     environment:
       <<: *node-env
+      OTEL_SERVICE_NAME: admin-service
       PORT: 3006
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/admin_db
       LEDGER_SERVICE_URL: http://ledger-service:3003
     volumes:
+      - ../services/admin-service/package.json:/app/package.json:ro
+      - ../services/admin-service/prisma.config.ts:/app/prisma.config.ts:ro
       - ../services/admin-service/src:/app/src:ro
       - ../services/admin-service/prisma:/app/prisma:ro
       - admin-node-modules:/app/node_modules
-      - admin-prisma:/app/.prisma
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -306,23 +326,56 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.58
     ports:
-      - "16686:16686"
-      - "4317:4317"
-      - "4318:4318"
+      - "16687:16686"
+      - "4319:4317"
+      - "4320:4318"
+
+  # ── Full Observability (opt-in via --profile monitoring) ───────────────────
+  # Start with: docker compose -f infra/docker-compose.dev.yml --profile monitoring up -d
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
+    ports:
+      - "9091:9090"
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3008:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/novapay.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    profiles: ["monitoring"]
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8082:8080"
 
 volumes:
   pgdata:
   gw-node-modules:
-  gw-prisma:
   acct-node-modules:
-  acct-prisma:
   txn-node-modules:
-  txn-prisma:
   ledger-node-modules:
-  ledger-prisma:
   fx-node-modules:
-  fx-prisma:
   payroll-node-modules:
-  payroll-prisma:
   admin-node-modules:
-  admin-prisma:
