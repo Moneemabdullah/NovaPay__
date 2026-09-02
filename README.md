@@ -66,6 +66,8 @@ No service reads or writes another service's database directly — all cross-ser
 
 ## Setup
 
+> **Full setup guide:** [docs/SETUP.md](docs/SETUP.md) — covers development, assessment, monitoring, running both stacks simultaneously, testing, troubleshooting, and all web interfaces.
+
 ```bash
 docker compose -f infra/docker-compose.yml up --build -d
 ```
