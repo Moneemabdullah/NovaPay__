@@ -1,0 +1,41 @@
+name: CI - Quality
+
+# Reusable stage: TypeScript typecheck + ESLint per changed service.
+# Called by ci.yml with the dynamic service matrix from detect-changes.
+on:
+  workflow_call:
+    inputs:
+      services:
+        description: 'Service matrix JSON from detect-changes, e.g. {"service":["api-gateway"]}'
+        required: true
+        type: string
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(inputs.services).service }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        run: npm ci
+
+      # `build` is the existing TypeScript typecheck (tsc --noEmit).
+      - name: TypeScript typecheck
+        working-directory: services/${{ matrix.service }}
+        run: npm run build
+
+      # Minimal flat config (services/*/eslint.config.mjs); errors fail CI.
+      - name: Lint
+        working-directory: services/${{ matrix.service }}
+        run: npm run lint

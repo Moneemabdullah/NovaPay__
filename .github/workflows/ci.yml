@@ -1,5 +1,15 @@
 name: CI
 
+# Top-level orchestrator. Stage logic lives in reusable workflows:
+#   ci-quality.yml (typecheck + lint)
+#   ci-tests.yml   (unit + integration + coverage + report-only audit)
+#   ci-build.yml   (Docker build verification + version gate)
+#
+# Flow:
+#   detect-changes --> quality --\
+#                \-> tests    ---\--> build --> ci-status
+#
+# `ci-status` is the single required branch-protection check (stable name).
 on:
   push:
     branches: [main]
@@ -68,159 +78,56 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-  test-build:
+  quality:
     needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJson(needs.detect-changes.outputs.matrix).service }}
-    env:
-      DATABASE_URL: "postgresql://test:test@localhost:5432/test"
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
+    uses: ./.github/workflows/ci-quality.yml
+    with:
+      services: ${{ needs.detect-changes.outputs.matrix }}
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+  tests:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
+    uses: ./.github/workflows/ci-tests.yml
+    with:
+      services: ${{ needs.detect-changes.outputs.matrix }}
 
-      - name: Install dependencies
-        working-directory: services/${{ matrix.service }}
-        run: npm ci
-
-      - name: Run unit tests
-        working-directory: services/${{ matrix.service }}
-        run: npm test
-        env:
-          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
-          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
-          ACCOUNT_SERVICE_URL: "http://localhost:19999"
-          LEDGER_SERVICE_URL: "http://localhost:19999"
-          FX_SERVICE_URL: "http://localhost:19999"
-          REDIS_URL: "redis://localhost:6379"
-          QUEUE_NAME: "test-queue"
-          TRANSACTION_SERVICE_URL: "http://localhost:19999"
-
-      - name: Create test database for integration tests
-        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
-        run: psql -h localhost -U test -d test -c "CREATE DATABASE \"${{ matrix.service }}_test\";" || true
-        env:
-          PGPASSWORD: test
-
-      - name: Run Prisma migrations for integration tests
-        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
-        working-directory: services/${{ matrix.service }}
-        run: npx prisma migrate deploy
-        env:
-          DATABASE_URL: "postgresql://test:test@localhost:5432/${{ matrix.service }}_test"
-
-      - name: Run integration tests
-        if: hashFiles(format('services/{0}/vitest.integration.config.ts', matrix.service)) != ''
-        working-directory: services/${{ matrix.service }}
-        run: npm run test:integration
-        env:
-          DATABASE_URL: "postgresql://test:test@localhost:5432/${{ matrix.service }}_test"
-          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
-          ACCOUNT_SERVICE_URL: "http://localhost:19999"
-          LEDGER_SERVICE_URL: "http://localhost:19999"
-          FX_SERVICE_URL: "http://localhost:19999"
-          REDIS_URL: "redis://localhost:6379"
-          QUEUE_NAME: "test-queue"
-          TRANSACTION_SERVICE_URL: "http://localhost:19999"
-
-      - name: TypeScript typecheck
-        working-directory: services/${{ matrix.service }}
-        run: npm run build
-
-      - name: Validate version bump
-        working-directory: services/${{ matrix.service }}
-        run: |
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          echo "Current version: $CURRENT_VERSION"
-
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE_SHA=${{ github.event.pull_request.base.sha }}
-          else
-            BASE_SHA=${{ github.event.before }}
-          fi
-
-          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            echo "Initial commit — version check skipped"
-            exit 0
-          fi
-
-          BASE_VERSION=$(git show "$BASE_SHA:services/${{ matrix.service }}/package.json" | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
-          echo "Base version:    $BASE_VERSION"
-
-          if [ "$CURRENT_VERSION" = "$BASE_VERSION" ]; then
-            echo "::error::Version must be bumped when modifying ${{ matrix.service }}. Current: $CURRENT_VERSION, Base: $BASE_VERSION"
-            exit 1
-          fi
-
-          echo "Version bumped: $BASE_VERSION → $CURRENT_VERSION"
-
-      - name: Read service version
-        id: version
-        working-directory: services/${{ matrix.service }}
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Build Docker image
-        working-directory: services/${{ matrix.service }}
-        run: docker build --build-arg DATABASE_URL="postgresql://test:test@localhost:5432/test" -t ${{ matrix.service }}:${{ steps.version.outputs.version }} .
-
-      - name: Verify Docker image
-        run: docker images ${{ matrix.service }}:${{ steps.version.outputs.version }}
+  build:
+    needs: [detect-changes, quality, tests]
+    if: needs.detect-changes.outputs.has_changes == 'true'
+    uses: ./.github/workflows/ci-build.yml
+    with:
+      services: ${{ needs.detect-changes.outputs.matrix }}
 
   ci-status:
     runs-on: ubuntu-latest
     if: always()
-    needs: [detect-changes, test-build]
+    needs: [detect-changes, quality, tests, build]
     steps:
       - name: Check results
         run: |
           echo "detect-changes result: ${{ needs.detect-changes.result }}"
-          echo "test-build result:     ${{ needs.test-build.result }}"
+          echo "quality result:        ${{ needs.quality.result }}"
+          echo "tests result:          ${{ needs.tests.result }}"
+          echo "build result:          ${{ needs.build.result }}"
 
           if [ "${{ needs.detect-changes.result }}" = "failure" ]; then
             echo "::error::Change detection failed"
             exit 1
           fi
 
-          if [ "${{ needs.test-build.result }}" = "failure" ]; then
-            echo "::error::One or more service jobs failed"
+          if [ "${{ needs.quality.result }}" = "failure" ] || [ "${{ needs.quality.result }}" = "cancelled" ]; then
+            echo "::error::quality job ${{ needs.quality.result }}"
             exit 1
           fi
 
-          if [ "${{ needs.test-build.result }}" = "cancelled" ]; then
-            echo "::error::Service jobs were cancelled"
+          if [ "${{ needs.tests.result }}" = "failure" ] || [ "${{ needs.tests.result }}" = "cancelled" ]; then
+            echo "::error::tests job ${{ needs.tests.result }}"
+            exit 1
+          fi
+
+          if [ "${{ needs.build.result }}" = "failure" ] || [ "${{ needs.build.result }}" = "cancelled" ]; then
+            echo "::error::build job ${{ needs.build.result }}"
             exit 1
           fi
 

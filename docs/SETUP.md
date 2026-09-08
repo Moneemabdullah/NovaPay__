@@ -403,6 +403,68 @@ Services with integration tests: `transaction-service`, `ledger-service`, `payro
 cd services/api-gateway && npm run build
 ```
 
+### Lint
+
+Minimal flat config (`eslint.config.mjs` per service; errors fail, warnings don't):
+
+```bash
+# Per-service:
+cd services/api-gateway && npm run lint
+```
+
+### Coverage
+
+V8 coverage (report-only, no threshold gate):
+
+```bash
+# Per-service (unit suite):
+cd services/api-gateway && npm run test:coverage
+# LCOV report: services/<name>/coverage/lcov.info
+```
+
+### Security Audit
+
+Native npm audit at high+ severity (report-only; see CI section):
+
+```bash
+# Per-service:
+cd services/api-gateway && npm audit --audit-level=high
+```
+
+### Docker Build Check
+
+```bash
+# Per-service (tag with the version in package.json):
+cd services/transaction-service && docker build -t transaction-service:$(node -p "require('./package.json').version") .
+# or all images:
+make build
+```
+
+## 10b. CI Pipeline
+
+`.github/workflows/ci.yml` runs on pushes and PRs targeting `main`. The single
+required status check is `ci-status`. Per-service stages run in order inside the
+`test-build` matrix (only changed services, detected via `dorny/paths-filter`):
+
+1. **Install** — `npm ci` (deterministic, lockfile + npm cache, Node 20)
+2. **Unit tests** — `npm test` (must pass)
+3. **Integration tests** — Postgres 16 + Redis 7 service containers,
+   `prisma migrate deploy`, `npm run test:integration`
+   (transaction/ledger/payroll only; api-gateway skips Prisma steps)
+4. **Typecheck** — `npm run build` (`tsc --noEmit`, must pass)
+5. **Lint** — `npm run lint` (errors fail CI)
+6. **Coverage** — `npm run test:coverage`, LCOV uploaded as
+   `coverage-<service>` artifact (informational, no threshold enforced)
+7. **Security audit** — `npm audit --audit-level=high`, JSON + summary
+   uploaded as `audit-<service>` artifact. Report-only: the tree carries
+   pre-existing high/critical transitives (prisma/vite/vitest chains), so
+   blocking today would keep CI permanently red. Triage the artifacts, then
+   remove `continue-on-error` to enforce.
+8. **Docker build** — BuildKit/buildx, GHA layer cache, build-only
+   (`push: false`), tagged `<service>:<package.json version>`
+9. **Version gate** — `package.json` version must differ from the base SHA
+   when the service changed; bump the version or CI fails.
+
 ---
 
 ## 11. API Reference

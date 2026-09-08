@@ -1,0 +1,152 @@
+name: CI - Tests
+
+# Reusable stage: unit + integration + coverage + report-only security audit
+# per changed service. Called by ci.yml with the dynamic service matrix.
+on:
+  workflow_call:
+    inputs:
+      services:
+        description: 'Service matrix JSON from detect-changes, e.g. {"service":["api-gateway"]}'
+        required: true
+        type: string
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(inputs.services).service }}
+    env:
+      DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        run: npm ci
+
+      # Unit tests (vitest run; failures fail the job).
+      - name: Run unit tests
+        working-directory: services/${{ matrix.service }}
+        run: npm test
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
+          ACCOUNT_SERVICE_URL: "http://localhost:19999"
+          LEDGER_SERVICE_URL: "http://localhost:19999"
+          FX_SERVICE_URL: "http://localhost:19999"
+          REDIS_URL: "redis://localhost:6379"
+          QUEUE_NAME: "test-queue"
+          TRANSACTION_SERVICE_URL: "http://localhost:19999"
+
+      # Prisma steps are conditional on prisma.config.ts so api-gateway (no
+      # Prisma DB config) is never forced through Prisma commands.
+      - name: Create test database for integration tests
+        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
+        run: psql -h localhost -U test -d test -c "CREATE DATABASE \"${{ matrix.service }}_test\";" || true
+        env:
+          PGPASSWORD: test
+
+      - name: Run Prisma migrations for integration tests
+        if: hashFiles(format('services/{0}/prisma.config.ts', matrix.service)) != ''
+        working-directory: services/${{ matrix.service }}
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/${{ matrix.service }}_test"
+
+      - name: Run integration tests
+        if: hashFiles(format('services/{0}/vitest.integration.config.ts', matrix.service)) != ''
+        working-directory: services/${{ matrix.service }}
+        run: npm run test:integration
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/${{ matrix.service }}_test"
+          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
+          ACCOUNT_SERVICE_URL: "http://localhost:19999"
+          LEDGER_SERVICE_URL: "http://localhost:19999"
+          FX_SERVICE_URL: "http://localhost:19999"
+          REDIS_URL: "redis://localhost:6379"
+          QUEUE_NAME: "test-queue"
+          TRANSACTION_SERVICE_URL: "http://localhost:19999"
+
+      # Coverage (v8 provider; report-only, no threshold gate).
+      # Coverage is informational: artifacts (text summary + lcov) are
+      # uploaded for review. No minimum threshold is enforced — the current
+      # unit suites cover mostly health/metrics/context paths, so any floor
+      # would be arbitrary. Revisit once integration coverage is merged in.
+      - name: Run coverage
+        working-directory: services/${{ matrix.service }}
+        run: npm run test:coverage -- --coverage.reporter=text --coverage.reporter=lcov
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          FIELD_ENCRYPTION_KEK: "test-kek-ci-0123456789abcdef0123"
+          ACCOUNT_SERVICE_URL: "http://localhost:19999"
+          LEDGER_SERVICE_URL: "http://localhost:19999"
+          FX_SERVICE_URL: "http://localhost:19999"
+          REDIS_URL: "redis://localhost:6379"
+          QUEUE_NAME: "test-queue"
+          TRANSACTION_SERVICE_URL: "http://localhost:19999"
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-${{ matrix.service }}
+          path: services/${{ matrix.service }}/coverage/lcov.info
+          if-no-files-found: warn
+
+      # SECURITY AUDIT (report-only at high+ severity; kept here to avoid a
+      # fourth npm ci per service).
+      # `npm audit` is the package manager's native mechanism. Threshold
+      # high+: moderate/low advisories never fail CI. The step is
+      # report-only (continue-on-error) because the dependency tree
+      # currently carries pre-existing high/critical transitives
+      # (prisma/vite/vitest chains); blocking on them today would keep the
+      # pipeline permanently red. Triage the JSON artifact, fix or accept,
+      # then flip off continue-on-error to start enforcing.
+      - name: Security audit
+        id: audit
+        continue-on-error: true
+        working-directory: services/${{ matrix.service }}
+        run: |
+          npm audit --audit-level=high 2>&1 | tee audit-summary.txt
+          npm audit --json > audit.json || true
+
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: audit-${{ matrix.service }}
+          path: |
+            services/${{ matrix.service }}/audit.json
+            services/${{ matrix.service }}/audit-summary.txt
+          if-no-files-found: warn
