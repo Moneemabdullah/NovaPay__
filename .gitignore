@@ -1,5 +1,8 @@
 node_modules/
 *.log
+coverage/
+audit.json
+audit-summary.txt
 
 
 # Environment files (keep .env.example committed, ignore actual values)
