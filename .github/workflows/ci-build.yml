@@ -1,0 +1,86 @@
+name: CI - Build
+
+# Reusable stage: Docker build verification + version gate per changed
+# service. Called by ci.yml with the dynamic service matrix.
+on:
+  workflow_call:
+    inputs:
+      services:
+        description: 'Service matrix JSON from detect-changes, e.g. {"service":["api-gateway"]}'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(inputs.services).service }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history is required by the version-gate step (git show $BASE_SHA).
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        run: npm ci
+
+      - name: Read service version
+        id: version
+        working-directory: services/${{ matrix.service }}
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Docker build (verification only: build, never push).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: false
+          load: true
+          tags: ${{ matrix.service }}:${{ steps.version.outputs.version }}
+          build-args: |
+            DATABASE_URL=postgresql://test:test@localhost:5432/test
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Verify Docker image
+        run: docker images ${{ matrix.service }}:${{ steps.version.outputs.version }}
+
+      # Version gate: bump package.json version when the service changes.
+      - name: Validate version bump
+        working-directory: services/${{ matrix.service }}
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+          else
+            BASE_SHA=${{ github.event.before }}
+          fi
+
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "Initial commit — version check skipped"
+            exit 0
+          fi
+
+          BASE_VERSION=$(git show "$BASE_SHA:services/${{ matrix.service }}/package.json" | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
+          echo "Base version:    $BASE_VERSION"
+
+          if [ "$CURRENT_VERSION" = "$BASE_VERSION" ]; then
+            echo "::error::Version must be bumped when modifying ${{ matrix.service }}. Current: $CURRENT_VERSION, Base: $BASE_VERSION"
+            exit 1
+          fi
+
+          echo "Version bumped: $BASE_VERSION → $CURRENT_VERSION"
