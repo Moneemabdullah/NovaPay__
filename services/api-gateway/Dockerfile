@@ -14,11 +14,14 @@ COPY . .
 RUN npm run build
 
 # --- Stage 3: runtime image with production dependencies only ---
+# No registry fetch here: reuse the node_modules tree from `builder`
+# and strip dev/peer packages locally with `npm prune` (offline deletion).
 FROM node:20-alpine AS production
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY --from=builder /app/node_modules ./node_modules
 # typescript is only an optional peer of @prisma/client/prisma; drop it for a true prod-only tree
-RUN npm ci --omit=dev --omit=peer \
+RUN npm prune --omit=dev --omit=peer \
     && rm -rf node_modules/typescript node_modules/.bin/tsc
 COPY --from=builder /app/src ./src
 EXPOSE 3000

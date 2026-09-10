@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { type LedgerEntry, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { ledgerInvariantViolations } from "../lib/metrics.js";
 import { getTracer } from "../lib/otel.js";
@@ -63,12 +63,14 @@ export function validateBatch(
     e.direction === "debit" ? (x.d += e.amountCents) : (x.c += e.amountCents);
     totals.set(e.currency, x);
   }
-  if ([...totals.values()].some((x) => x.d !== x.c || !x.d || !x.c))
+  if ([...totals.values()].some((x) => x.d !== x.c || !x.d || !x.c)) {
+    ledgerInvariantViolations.inc();
     return {
       status: 422,
       error: "UNBALANCED_LEDGER_TRANSACTION",
       message: "Debits must equal credits per currency",
     };
+  }
   return null;
 }
 

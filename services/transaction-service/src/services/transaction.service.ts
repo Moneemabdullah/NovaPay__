@@ -2,7 +2,7 @@ import { Prisma, Transaction } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
 import { setContext } from "../lib/context.js";
-import { post, cents, sha, canonical, get } from "../lib/http.js";
+import { post, cents, sha, get } from "../lib/http.js";
 import { getTracer } from "../lib/otel.js";
 import { SpanStatusCode } from "@opentelemetry/api";
 
