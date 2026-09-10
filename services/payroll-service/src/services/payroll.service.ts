@@ -29,7 +29,9 @@ export async function createPayrollJob(input: {
     });
     return j;
   });
-  await new Queue(`payroll:${employerAccountId}`, {
+  // Single shared queue: the worker (worker.ts) and the
+  // payroll_queue_depth gauge (lib/metrics.ts) both use envVars.QUEUE_NAME.
+  await new Queue(envVars.QUEUE_NAME, {
     connection: { url: envVars.REDIS_URL },
   }).add("process", { jobId: job.id }, { attempts: 3 });
   return job;
