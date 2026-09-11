@@ -49,10 +49,11 @@ Status: **implemented**. All six services run, connect to their own database, an
                   ───────── ASYNCHRONOUS PAYROLL ─────────
 
 ┌───────────────┐    ┌───────────────┐    ┌─────────────────┐    ┌────────────────┐
-│ Payroll :3005 │───▶│ Redis :6379   │───▶│ Workers         │───▶│ Transaction    │
-│               │    │ BullMQ        │    │ per-employer    │    │ :3002          │
-└───────────────┘    └───────────────┘    │ concurrency: 1  │    └────────────────┘
-                                          └─────────────────┘
+│ Payroll :3005 │───▶│ Redis :6379   │───▶│ Worker          │───▶│ Transaction    │
+│               │    │ BullMQ shared │    │ concurrency: 5  │    │ :3002          │
+└───────────────┘    │ queue + per-  │    │ + per-employer  │    └────────────────┘
+                     │ employer lock │    │ lease lock      │
+                     └───────────────┘    └─────────────────┘
 
                   ───────── OBSERVABILITY ─────────
 
@@ -539,8 +540,13 @@ The recovery is idempotent and never creates money.
 
 ## Payroll Queue Design
 
-- One BullMQ queue per employer account (`payroll:{employerAccountId}`)
-- `concurrency: 1` per Worker — serializes writes per employer without global locks
+- One shared BullMQ queue (`QUEUE_NAME=payroll`) for all employers
+- Worker `concurrency: 5` — different employers process in parallel
+- Per-employer Redis lease lock (`payroll:employer-lock:<employerAccountId>`,
+  120s TTL, unique token, ownership-safe Lua release) serializes jobs of the
+  same employer without a global lock
+- Lock contention defers the job via BullMQ delayed requeue without consuming
+  one of its 3 retry attempts (`attempts: 3` is preserved for genuine failures)
 - Checkpoint-index pattern: `checkpoint_index` tracks the last successfully processed line item
 - On worker restart, processing resumes from `checkpoint_index`
 - Each line item has a deterministic idempotency key (`sha256(jobId:lineIndex)`)

@@ -3,8 +3,20 @@ import { Queue } from "bullmq";
 import { context, propagation } from "@opentelemetry/api";
 import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
+import {
+  lockRedis,
+  withEmployerLock,
+  type LockRedis,
+} from "../lib/employerLock.js";
 import { getTracer } from "../lib/otel.js";
 import { SpanStatusCode } from "@opentelemetry/api";
+
+export type PayrollJobData = {
+  jobId: string;
+  // Present on jobs enqueued after the shared-queue migration; older
+  // in-flight jobs carry only jobId and fall back to a DB lookup below.
+  employerAccountId?: string;
+};
 
 export async function createPayrollJob(input: {
   employerAccountId: string;
@@ -33,8 +45,39 @@ export async function createPayrollJob(input: {
   // payroll_queue_depth gauge (lib/metrics.ts) both use envVars.QUEUE_NAME.
   await new Queue(envVars.QUEUE_NAME, {
     connection: { url: envVars.REDIS_URL },
-  }).add("process", { jobId: job.id }, { attempts: 3 });
+  }).add(
+    "process",
+    { jobId: job.id, employerAccountId } satisfies PayrollJobData,
+    { attempts: 3 },
+  );
   return job;
+}
+
+// Runs one payroll job holding the per-employer lease, so jobs for the same
+// employer never execute concurrently while different employers proceed in
+// parallel across worker slots. Throws EmployerLockBusyError when another
+// worker holds the employer's lease; the worker defers that job.
+export async function runPayrollJobExclusive(
+  jobData: PayrollJobData,
+  deps: {
+    redis?: LockRedis;
+    process?: (jobId: string) => Promise<unknown>;
+  } = {},
+) {
+  const redis = deps.redis ?? lockRedis();
+  const process = deps.process ?? processPayroll;
+  let employerAccountId = jobData.employerAccountId;
+  if (!employerAccountId) {
+    const record = await prisma.payrollJob.findUnique({
+      where: { id: jobData.jobId },
+      select: { employerAccountId: true },
+    });
+    if (!record) throw new Error("Payroll job not found");
+    employerAccountId = record.employerAccountId;
+  }
+  return withEmployerLock(redis, employerAccountId, () =>
+    process(jobData.jobId),
+  );
 }
 
 export async function getPayrollJob(jobId: string) {
