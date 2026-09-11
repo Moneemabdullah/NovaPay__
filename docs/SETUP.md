@@ -399,7 +399,8 @@ Services with integration tests: `transaction-service`, `ledger-service`, `payro
 ### Type Checking
 
 ```bash
-# Per-service:
+make typecheck
+# or per-service:
 cd services/api-gateway && npm run build
 ```
 
@@ -417,7 +418,8 @@ cd services/api-gateway && npm run lint
 V8 coverage (report-only, no threshold gate):
 
 ```bash
-# Per-service (unit suite):
+make coverage
+# or per-service (unit suite):
 cd services/api-gateway && npm run test:coverage
 # LCOV report: services/<name>/coverage/lcov.info
 ```
@@ -427,8 +429,18 @@ cd services/api-gateway && npm run test:coverage
 Native npm audit at high+ severity (report-only; see CI section):
 
 ```bash
-# Per-service:
+make security-audit
+# or per-service:
 cd services/api-gateway && npm audit --audit-level=high
+```
+
+### Full Local Gate
+
+`make check` runs the same gating sequence as CI (typecheck + lint +
+unit tests + integration tests) and stops on the first failure:
+
+```bash
+make check
 ```
 
 ### Docker Build Check
@@ -553,10 +565,13 @@ Pre-configured with Prometheus datasource and the NovaPay dashboard:
 
 | Target | Description |
 |--------|-------------|
-| `make up` | Build + start production stack |
+| `make up` | Start production stack |
+| `make build-up` | Build + start production stack (force rebuild) |
 | `make down` | Stop production stack |
 | `make logs` | Tail production logs |
 | `make ps` | Show production containers |
+| `make build` | Build all images without starting |
+| `make init-db` | Start only the infra DBs (Postgres + Redis) |
 | `make dev-up` | Start development stack |
 | `make dev-down` | Stop development stack |
 | `make dev-logs` | Tail development logs |
@@ -564,6 +579,11 @@ Pre-configured with Prometheus datasource and the NovaPay dashboard:
 | `make dev-build` | Rebuild dev dependencies |
 | `make test` | Run all unit tests |
 | `make integration-test` | Run all integration tests |
+| `make typecheck` | TypeScript typecheck (`tsc --noEmit`) in every service |
+| `make coverage` | Vitest v8 coverage in every service (report-only) |
+| `make security-audit` | `npm audit` at high+ severity (report-only, never fails) |
+| `make check` | Full local gate: typecheck + lint + unit + integration tests |
+| `make lint` | Run the linter in every service |
 | `make migrate` | Apply Prisma migrations |
 | `make generate` | Generate Prisma clients |
 

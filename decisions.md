@@ -74,15 +74,29 @@ or overwritten.
 
 ## Problem 2 — Bulk Payroll Queue Design
 
-**Summary:** One BullMQ queue per employer account, one Worker per queue at
-`concurrency: 1`. This serializes writes against a single employer's funding
-account without a global lock (which would serialize unrelated employers) or
+**Summary:** One shared BullMQ queue (`QUEUE_NAME=payroll`) with a single
+Worker at `concurrency: 5`, plus a per-employer Redis lease lock. This
+serializes writes against a single employer's funding account without a
+global lock (which would serialize unrelated employers), without one queue
+per employer (BullMQ OSS has no cross-queue concurrency groups), and without
 a long-held DB row lock (which would create severe contention across
 sequential debits).
 
+**Mechanism (`payroll:employer-lock:<employerAccountId>`):** the worker
+acquires the lease with `SET key token PX 120000 NX` before processing and
+releases it in a `finally` via an ownership-safe Lua compare-and-delete, so
+a worker whose lease expired can never delete its successor's lock. The
+120s TTL bounds crash-induced blocking. On contention the job is moved back
+to delayed (`moveToDelayed` with `skipAttempt`) and the processor throws
+`DelayedError` so the worker skips the failed path — no busy-wait, no burnt
+retry attempt (`attempts: 3` is preserved for genuine failures). Job payloads
+carry `employerAccountId` inline with a DB-lookup fallback for legacy jobs.
+
 **Code paths:**
-- Queue creation: `payroll-service/src/services/payroll.service.ts:29-31`
-- Worker: `payroll-service/src/worker.ts:5-8`
+- Lease utility: `payroll-service/src/lib/employerLock.ts`
+- Exclusive runner + producer: `payroll-service/src/services/payroll.service.ts`
+  (`runPayrollJobExclusive`, `createPayrollJob`)
+- Worker: `payroll-service/src/worker.ts`
 
 **Checkpoint pattern:** `payroll_jobs.checkpoint_index` tracks the last
 successfully processed line item. On worker restart/retry, processing resumes
@@ -158,7 +172,7 @@ All five services are instrumented with OTel traces that reach Jaeger. The imple
 - **Diagnostic logging:** `fx-service` logs `[otel] Tracer initialized successfully` and `[otel] Tracer type: ProxyTracer` to verify the SDK is working.
 
 **Prometheus metrics:**
-HTTP request duration histograms, transaction counters, ledger invariant violations, and FX provider failures are exposed at `/metrics` on each service.
+HTTP request duration histograms, transaction counters, ledger invariant violations, and FX provider failures are exposed at `/metrics` on each service. Rejected unbalanced ledger batches (`422 UNBALANCED_LEDGER_TRANSACTION`) increment the existing `ledger_invariant_violations_total` counter at the single validation failure point, and `payroll-service` exposes a `payroll_queue_depth` gauge over the shared BullMQ queue the worker actually consumes.
 
 **Grafana:**
 Provisioned dashboards and alerting rules for all services.
@@ -182,6 +196,7 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) with a strict gate:
 - `prisma@6.19.3` pinned across all services.
 - `prisma migrate deploy` (not `migrate dev`) for CI — idempotent, no interactive prompts.
 - Integration tests run only when the service's source files change (path filter on `services/<name>/**`).
+- `make check` reproduces the gating sequence locally (typecheck + lint + unit + integration tests); `make typecheck`, `make coverage`, and report-only `make security-audit` cover the remaining CI stages.
 
 **Code path:** `.github/workflows/ci.yml`
 

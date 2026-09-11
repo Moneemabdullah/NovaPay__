@@ -4,7 +4,7 @@ DEV_COMPOSE := docker compose -f infra/docker-compose.dev.yml
 SERVICES := account transaction ledger fx payroll admin api-gateway
 DB_SERVICES := account transaction ledger fx payroll admin
 
-.PHONY: help up down logs ps build migrate generate test init-db \
+.PHONY: help up down logs ps build rebuild migrate generate test init-db \
         typecheck coverage security-audit check lint integration-test \
         dev-up dev-down dev-logs dev-ps dev-build
 
@@ -18,6 +18,7 @@ help:
 	@echo "  make logs      		Tail logs from all containers"
 	@echo "  make ps         		Show running containers"
 	@echo "  make build      		Build all images without starting"
+	@echo "  make rebuild    		Interactive rebuild/recreate of one selected service"
 	@echo "  make init-db    		Start only the infra DBs (Postgres + Redis)"
 	@echo "  make migrate    		Apply Prisma migrations to each service DB"
 	@echo "  make generate   		Run prisma generate in each DB service"
@@ -53,6 +54,29 @@ ps:
 
 build:
 	$(COMPOSE) build
+
+rebuild:
+	@echo "Select a service to rebuild:"
+	@echo "  1) api-gateway"
+	@echo "  2) account-service"
+	@echo "  3) transaction-service"
+	@echo "  4) ledger-service"
+	@echo "  5) fx-service"
+	@echo "  6) payroll-service"
+	@echo "  7) admin-service"
+	@read -p "Select a service to rebuild [1-7]: " choice; \
+	case "$$choice" in \
+		1) svc="api-gateway";; \
+		2) svc="account-service";; \
+		3) svc="transaction-service";; \
+		4) svc="ledger-service";; \
+		5) svc="fx-service";; \
+		6) svc="payroll-service";; \
+		7) svc="admin-service";; \
+		*) echo "Error: invalid selection '$$choice' — enter a number from 1 to 7." >&2; exit 1;; \
+	esac; \
+	echo "==> rebuilding $$svc (without dependencies)"; \
+	$(COMPOSE) up -d --build --no-deps "$$svc"
 
 init-db:
 	$(COMPOSE) up -d postgres redis
