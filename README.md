@@ -560,6 +560,7 @@ Envelope encryption for PII (fullName, phone):
 - DEK encrypts fields using AES-256-GCM (ciphertext + IV + auth tag)
 - DEK itself is encrypted ("wrapped") by a Key Encryption Key (KEK) from `FIELD_ENCRYPTION_KEK` env var
 - Stored in `users` table: `full_name_enc`, `full_name_iv`, `full_name_tag`, `dek_wrapped`
+- Write-only by design (no decrypt API — no read path needs plaintext); see [docs/ENCRYPTION_AND_TESTS.md](docs/ENCRYPTION_AND_TESTS.md)
 
 ## Observability
 
