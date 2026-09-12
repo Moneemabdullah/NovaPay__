@@ -5,6 +5,11 @@ import {
   getPayrollJob,
 } from "../services/payroll.service.js";
 
+// Operational upper bound, not a pricing/business rule: 5000 typical items
+// serialize to ~0.4 MB, comfortably under Fastify's 1 MB default body limit
+// and the 10m Nginx limit, while keeping single-batch DB/queue work bounded.
+export const MAX_PAYROLL_ITEMS = 5000;
+
 export async function payrollRoutes(app: FastifyInstance) {
   app.post<{
     Body: {
@@ -16,6 +21,7 @@ export async function payrollRoutes(app: FastifyInstance) {
     if (
       !employerAccountId ||
       !items.length ||
+      items.length > MAX_PAYROLL_ITEMS ||
       items.some(
         (x) =>
           !x.recipientWalletId ||
