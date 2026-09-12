@@ -138,7 +138,10 @@ Rotating the KEK means re-wrapping DEKs, not re-encrypting every field.
 **Code path:** `account-service/src/services/crypto.service.ts:7-31`
 
 **Note:** The encryption utility is implemented and used on write. A
-decryption utility for reading PII back has not yet been implemented.
+decryption utility is intentionally absent: no route, service, or query
+reads the encrypted columns back, so adding one would widen PII exposure
+for zero business value (see `docs/ENCRYPTION_AND_TESTS.md`). `createUser`
+returns only `{id, email, createdAt}`.
 
 ## Audit Hash Chain
 
