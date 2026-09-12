@@ -550,6 +550,7 @@ The recovery is idempotent and never creates money.
 - Checkpoint-index pattern: `checkpoint_index` tracks the last successfully processed line item
 - On worker restart, processing resumes from `checkpoint_index`
 - Each line item has a deterministic idempotency key (`sha256(jobId:lineIndex)`)
+- Request size limits (Nginx 10 MB edge cap, 5000-item batch cap) are documented in [docs/REQUEST_SIZE_LIMITS.md](docs/REQUEST_SIZE_LIMITS.md)
 
 ## Field-Level Encryption
 
