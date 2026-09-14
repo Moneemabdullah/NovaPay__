@@ -54,6 +54,7 @@ services:
       FX_SERVICE_URL: http://fx-service:3004
       PAYROLL_SERVICE_URL: http://payroll-service:3005
       ADMIN_SERVICE_URL: http://admin-service:3006
+      SERVICE_TOKEN: novapay-dev-gateway-token
     depends_on:
       - account-service
       - transaction-service
@@ -70,6 +71,9 @@ services:
       PORT: 3001
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/account_db
       FIELD_ENCRYPTION_KEK: novapay-local-dev-encryption-kek-2024
+      SERVICE_TOKEN: novapay-dev-account-token
+      PEER_TRANSACTION_SERVICE_TOKEN: novapay-dev-transaction-token
+      PEER_API_GATEWAY_TOKEN: novapay-dev-gateway-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,6 +86,9 @@ services:
       PORT: 3002
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/transaction_db
       REDIS_URL: redis://redis:6379
+      SERVICE_TOKEN: novapay-dev-transaction-token
+      PEER_API_GATEWAY_TOKEN: novapay-dev-gateway-token
+      PEER_PAYROLL_SERVICE_TOKEN: novapay-dev-payroll-token
       ACCOUNT_SERVICE_URL: http://account-service:3001
       LEDGER_SERVICE_URL: http://ledger-service:3003
       FX_SERVICE_URL: http://fx-service:3004
@@ -96,6 +103,10 @@ services:
       OTEL_SERVICE_NAME: ledger-service
       PORT: 3003
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/ledger_db
+      SERVICE_TOKEN: novapay-dev-ledger-token
+      PEER_TRANSACTION_SERVICE_TOKEN: novapay-dev-transaction-token
+      PEER_ADMIN_SERVICE_TOKEN: novapay-dev-admin-token
+      PEER_API_GATEWAY_TOKEN: novapay-dev-gateway-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,6 +119,9 @@ services:
       PORT: 3004
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/fx_db
       FX_PROVIDER_DOWN: "false"
+      SERVICE_TOKEN: novapay-dev-fx-token
+      PEER_TRANSACTION_SERVICE_TOKEN: novapay-dev-transaction-token
+      PEER_API_GATEWAY_TOKEN: novapay-dev-gateway-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,6 +136,8 @@ services:
       REDIS_URL: redis://redis:6379
       QUEUE_NAME: payroll
       TRANSACTION_SERVICE_URL: http://transaction-service:3002
+      SERVICE_TOKEN: novapay-dev-payroll-token
+      PEER_API_GATEWAY_TOKEN: novapay-dev-gateway-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,6 +152,8 @@ services:
       PORT: 3006
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/admin_db
       LEDGER_SERVICE_URL: http://ledger-service:3003
+      SERVICE_TOKEN: novapay-dev-admin-token
+      PEER_API_GATEWAY_TOKEN: novapay-dev-gateway-token
     depends_on:
       postgres:
         condition: service_healthy
