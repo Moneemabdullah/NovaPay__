@@ -8,6 +8,7 @@ import { httpMetricsHooks } from "./lib/metrics.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 import { registerTracingHooks } from "./middlewares/tracing.js";
+import { REDACT_PATHS } from "./lib/logger.js";
 import { registerSwagger } from "./plugins/swagger.js";
 
 const routes: { prefix: string; upstream: string; rewritePrefix: string }[] = [
@@ -22,7 +23,10 @@ const routes: { prefix: string; upstream: string; rewritePrefix: string }[] = [
 
 export async function buildApp() {
   const app = Fastify({
-    logger: { level: envVars.LOG_LEVEL },
+    logger: {
+      level: envVars.LOG_LEVEL,
+      redact: { paths: REDACT_PATHS, censor: "[REDACTED]" },
+    },
   });
 
   await app.register(helmet);
