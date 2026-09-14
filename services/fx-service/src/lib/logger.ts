@@ -53,6 +53,8 @@ export const REDACT_PATHS = [
   "*.authorization",
   "apiKey",
   "*.apiKey",
+  "x-service-token",
+  "*.x-service-token",
   "kek",
   "*.kek",
   "dek",
