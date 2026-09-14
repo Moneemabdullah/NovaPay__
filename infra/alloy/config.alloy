@@ -1,0 +1,60 @@
+// Grafana Alloy: collect Docker container stdout/stderr and ship to Loki.
+//
+// Label discipline (cardinality safety): only low-cardinality stable
+// labels are attached here (service, container, environment). Everything
+// else (level, msg, requestId, trace_id, span_id, error) stays inside the
+// JSON log line and is filtered at query time with LogQL `| json` —
+// parsing at ingestion would drop non-JSON lines (startup banners,
+// framework notices) and explode label cardinality.
+//
+// ALLOY_PROJECT must be set (compose does this per stack) so each stack's
+// Alloy only scrapes its own project's containers.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "project" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = sys.env("ALLOY_PROJECT")
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    replacement   = "novapay"
+    target_label  = "environment"
+  }
+}
+
+loki.source.docker "logs" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.project.output
+  refresh_interval = "30s"
+  forward_to       = [loki.write.loki.receiver]
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

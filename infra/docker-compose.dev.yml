@@ -215,6 +215,7 @@ services:
       OTEL_SERVICE_NAME: transaction-service
       PORT: 3002
       DATABASE_URL: postgres://novapay:novapay@postgres:5432/transaction_db
+      REDIS_URL: redis://redis:6379
       ACCOUNT_SERVICE_URL: http://account-service:3001
       LEDGER_SERVICE_URL: http://ledger-service:3003
       FX_SERVICE_URL: http://fx-service:3004
@@ -370,6 +371,33 @@ services:
     ports:
       - "8082:8080"
 
+  loki:
+    profiles: ["monitoring"]
+    image: grafana/loki:3.3.2
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    # Internal only: reachable as http://loki:3100 inside the network.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  alloy:
+    profiles: ["monitoring"]
+    image: grafana/alloy:v1.5.1
+    command: run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      ALLOY_PROJECT: novapay-dev
+    depends_on:
+      loki:
+        condition: service_healthy
+
 volumes:
   pgdata:
   gw-node-modules:
@@ -379,3 +407,4 @@ volumes:
   fx-node-modules:
   payroll-node-modules:
   admin-node-modules:
+  loki-data:
