@@ -72,6 +72,12 @@ or overwritten.
 
 **Code path:** `transaction-service/src/services/transaction.service.ts:249-255`
 
+**Concurrency addendum:** mutual exclusion now lives *inside* `execute()`
+(audit finding: a live request racing recovery could interleave reversal
+with forward progress and create money). Contended callers report fresh
+status without side effects; Redis outage fails open loudly. Full audit
+in `docs/MONEY_MOVEMENT_CONSISTENCY.md`.
+
 ## Problem 2 — Bulk Payroll Queue Design
 
 **Summary:** One shared BullMQ queue (`QUEUE_NAME=payroll`) with a single
@@ -106,6 +112,23 @@ so even if an already-completed item is re-attempted, the Transaction
 Service's idempotency gate makes it a safe no-op.
 
 **Code path:** `payroll-service/src/services/payroll.service.ts:68-80`
+
+## Problem 2b — Transaction History Pagination
+
+**Decision:** new `GET /transactions?walletId&limit&cursor` uses keyset
+pagination (`createdAt DESC, id DESC`, opaque base64url cursor, `limit+1`
+rows instead of `COUNT(*)`) rather than OFFSET — page cost stays flat and
+concurrent inserts can't shift or duplicate rows mid-traversal. No history
+endpoint existed before; the gateway's `/transactions` prefix proxy
+exposes it with no gateway change. One composite index per wallet side —
+`(sender_wallet_id, created_at DESC, id DESC)` and the recipient twin —
+because the sender/recipient OR needs equality-first ordering per branch
+(EXPLAIN-verified: index-only scans per branch, BitmapOr + bounded top-N
+sort combined, ~2 ms on a 20k-row set, never a sequential scan). Full
+analysis in `docs/TRANSACTION_HISTORY.md`.
+
+**Code paths:** `transaction-service/src/services/history.service.ts`,
+`transaction-service/prisma/migrations/0002_history_indexes/migration.sql`
 
 ## Problem 3 — FX Rate Locking
 
@@ -180,6 +203,22 @@ HTTP request duration histograms, transaction counters, ledger invariant violati
 **Grafana:**
 Provisioned dashboards and alerting rules for all services.
 
+**Centralized logging (Loki + Alloy):**
+Pino stdout → Alloy (Docker discovery, project-scoped) → Loki (single-node
+TSDB, internal only) → Grafana (provisioned Loki datasource). Labels are
+limited to `service`/`container`/`environment`; level, message,
+`requestId`, `trace_id`/`span_id`, and errors stay in the JSON line and are
+filtered at query time (`| json`) to protect cardinality and never drop
+non-JSON lines. `trace_id`/`span_id` come from a read-only OTel API lookup
+in `createLogger` — no Logs API migration, no second framework.
+
+**Why Loki:** centralized logs with native Grafana integration, fits the
+existing stack. **Why Alloy:** Docker-native collection in the Grafana
+ecosystem, OTel-compatible. **Why not Sentry now:** OTel + Grafana +
+Jaeger already cover error observability; avoid duplicate systems until
+dedicated error tracking is needed. **Why no Slack/WhatsApp:** external
+notification deliberately deferred; internal Grafana alerting suffices.
+
 **Code paths:**
 - OTel init: `services/*/src/lib/otel.ts` (each service)
 - Tracing hooks: `services/api-gateway/src/middlewares/tracing.ts`, `services/account-service/src/middlewares/tracing.ts`, `services/fx-service/src/middlewares/tracing.ts`
@@ -202,6 +241,24 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) with a strict gate:
 - `make check` reproduces the gating sequence locally (typecheck + lint + unit + integration tests); `make typecheck`, `make coverage`, and report-only `make security-audit` cover the remaining CI stages.
 
 **Code path:** `.github/workflows/ci.yml`
+
+## Hardening Decisions
+
+- **Structured logging** — the per-service `lib/logger.ts` redaction list
+  is now loaded into each Fastify bootstrap, and `createLogger("server")`
+  emits the boot line. Single stdout stream (no duplicates, no container
+  file growth); request IDs still flow via `x-request-id` + ALS context.
+- **Ledger audit batching** — `auditVerify()` pages by monotonic BigInt
+  `id` (`AUDIT_BATCH_SIZE = 1000`) instead of one unbounded `findMany`;
+  `invariantCheck()` was already a single `GROUP BY` aggregate and is
+  unchanged. See `docs/HARDENING.md`.
+- **Automatic recovery** — transaction-service runs an in-process 60s
+  scheduler (first tick 5s after boot) calling the same stale-scan +
+  idempotent `execute()` the manual `/internal/recover` route now
+  delegates to. Mutual exclusion uses an ownership-safe Redis lease
+  (`SET NX PX` + token Lua release + heartbeat renewal); `REDIS_URL`
+  added to transaction-service env (both compose files). See
+  `docs/HARDENING.md`.
 
 ## Tradeoffs Made Under Time Pressure
 
