@@ -68,6 +68,7 @@ No service reads or writes another service's database directly — all cross-ser
 - **Observability** — Prometheus metrics, Grafana dashboards, Loki centralized logging, Jaeger distributed tracing (`docs/OBSERVABILITY.md`)
 - **Request hardening** — Nginx 10 MB edge cap plus application batch validation (`docs/REQUEST_SIZE_LIMITS.md`)
 - **PII protection** — AES-256-GCM envelope encryption, write-only by design (`docs/ENCRYPTION_AND_TESTS.md`)
+- **Service-to-service security** — per-service identity tokens with route-scoped authorization, no shared global credential (`docs/SERVICE_TO_SERVICE_SECURITY.md`)
 
 ## Services
 

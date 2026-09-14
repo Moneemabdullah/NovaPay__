@@ -130,6 +130,21 @@ analysis in `docs/TRANSACTION_HISTORY.md`.
 **Code paths:** `transaction-service/src/services/history.service.ts`,
 `transaction-service/prisma/migrations/0002_history_indexes/migration.sql`
 
+## Problem 2c — Service-to-Service Authentication & Authorization
+
+**Decision:** per-service bearer identity (`x-service-id` /
+`x-service-token`) with route-scoped allow-lists, instead of a shared
+global token, mTLS, or a service mesh. Internal endpoints previously
+accepted any caller on the Docker network; now each receiver verifies
+the caller against peer tokens and authorizes identity + endpoint
+(e.g. only `transaction-service` may `POST /batches`; only the service
+itself may `POST /internal/*`). Dev-default tokens follow the existing
+`FIELD_ENCRYPTION_KEK` precedent and must be rotated outside local use.
+Full analysis in `docs/SERVICE_TO_SERVICE_SECURITY.md`.
+
+**Code paths:** `services/*/src/middlewares/service-auth.ts`,
+`services/api-gateway/src/app.ts` (gateway identity injection)
+
 ## Problem 3 — FX Rate Locking
 
 **Mechanism:** `fx-service` issues quotes with a 60-second TTL
