@@ -12,6 +12,9 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   DATABASE_URL: z.string().min(1),
   LEDGER_SERVICE_URL: z.string().min(1).default("http://ledger-service:3003"),
+  SERVICE_ID: z.string().min(1).default("admin-service"),
+  SERVICE_TOKEN: z.string().min(1).default("novapay-dev-admin-token"),
+  PEER_API_GATEWAY_TOKEN: z.string().default(""),
 });
 
 const loadEnv = () => {
@@ -37,6 +40,9 @@ const loadEnv = () => {
     LOG_LEVEL: env.LOG_LEVEL,
     DATABASE_URL: env.DATABASE_URL,
     LEDGER_SERVICE_URL: env.LEDGER_SERVICE_URL,
+    SERVICE_ID: env.SERVICE_ID,
+    SERVICE_TOKEN: env.SERVICE_TOKEN,
+    PEER_API_GATEWAY_TOKEN: env.PEER_API_GATEWAY_TOKEN,
   };
 };
 
