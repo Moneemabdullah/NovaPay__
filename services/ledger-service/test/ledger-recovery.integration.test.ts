@@ -1,6 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { buildApp } from "../src/app.js";
 import { prisma } from "../src/lib/prisma.js";
+import { envVars } from "../src/config/env.utils.js";
+
+// Batch endpoints accept the transaction-service identity; invariant reads
+// accept the admin identity (mirrors the production caller matrix).
+const TXN_HEADERS = {
+  "x-service-id": "transaction-service",
+  "x-service-token": "test-txn-token",
+};
+const ADMIN_HEADERS = {
+  "x-service-id": "admin-service",
+  "x-service-token": "test-admin-token",
+};
 
 const SENDER = "00000000-0000-0000-0000-0000000000aa";
 const RECIPIENT = "00000000-0000-0000-0000-0000000000bb";
@@ -16,12 +28,21 @@ describe("ledger invariant across crash-recovery scenarios (integration)", () =>
   let app: Awaited<ReturnType<typeof buildApp>>;
 
   const invariant = () =>
-    app.inject({ method: "GET", url: "/invariant-check" }).then((r) => r.json());
+    app
+      .inject({ method: "GET", url: "/invariant-check", headers: ADMIN_HEADERS })
+      .then((r) => r.json());
 
   const postBatch = (transactionId: string, entries = BALANCED_ENTRIES) =>
-    app.inject({ method: "POST", url: "/batches", payload: { transactionId, entries } });
+    app.inject({
+      method: "POST",
+      url: "/batches",
+      headers: TXN_HEADERS,
+      payload: { transactionId, entries },
+    });
 
   beforeAll(async () => {
+    envVars.PEER_TRANSACTION_SERVICE_TOKEN = "test-txn-token";
+    envVars.PEER_ADMIN_SERVICE_TOKEN = "test-admin-token";
     app = await buildApp();
   });
 
@@ -47,7 +68,11 @@ describe("ledger invariant across crash-recovery scenarios (integration)", () =>
 
     const res = await postBatch(TX(1));
     expect(res.statusCode).toBe(201);
-    const get = await app.inject({ method: "GET", url: `/batches/${TX(1)}` });
+    const get = await app.inject({
+      method: "GET",
+      url: `/batches/${TX(1)}`,
+      headers: TXN_HEADERS,
+    });
     expect(get.statusCode).toBe(200);
 
     const after = await invariant();
@@ -67,7 +92,11 @@ describe("ledger invariant across crash-recovery scenarios (integration)", () =>
   });
 
   it("a reversed movement never posts a batch, so the ledger stays empty and balanced", async () => {
-    const get = await app.inject({ method: "GET", url: `/batches/${TX(3)}` });
+    const get = await app.inject({
+      method: "GET",
+      url: `/batches/${TX(3)}`,
+      headers: TXN_HEADERS,
+    });
     expect(get.statusCode).toBe(404);
     expect(await prisma.ledgerTransaction.count()).toBe(0);
 
@@ -80,7 +109,11 @@ describe("ledger invariant across crash-recovery scenarios (integration)", () =>
     await postBatch(TX(4));
     await postBatch(TX(4));
     // The reversed movement for TX(5) never reaches the ledger.
-    const get = await app.inject({ method: "GET", url: `/batches/${TX(5)}` });
+    const get = await app.inject({
+      method: "GET",
+      url: `/batches/${TX(5)}`,
+      headers: TXN_HEADERS,
+    });
     expect(get.statusCode).toBe(404);
 
     const r = await invariant();

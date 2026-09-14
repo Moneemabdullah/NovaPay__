@@ -14,10 +14,18 @@ export const canonical = (x: any): string =>
 export const sha = (x: any) =>
   crypto.createHash("sha256").update(canonical(x)).digest("hex");
 
+function serviceIdentity(): Record<string, string> {
+  return {
+    "x-service-id": envVars.SERVICE_ID,
+    "x-service-token": envVars.SERVICE_TOKEN,
+  };
+}
+
 export async function post(base: string, path: string, body: any, id?: string) {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "x-request-id": id ?? crypto.randomUUID(),
+    ...serviceIdentity(),
   };
   propagation.inject(context.active(), headers);
   const r = await fetch(base + path, {
@@ -37,6 +45,7 @@ export async function post(base: string, path: string, body: any, id?: string) {
 export async function get(base: string, path: string, id?: string) {
   const headers: Record<string, string> = {
     "x-request-id": id ?? crypto.randomUUID(),
+    ...serviceIdentity(),
   };
   propagation.inject(context.active(), headers);
   const r = await fetch(base + path, { headers });

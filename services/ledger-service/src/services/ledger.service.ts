@@ -149,16 +149,33 @@ export async function invariantCheck() {
   };
 }
 
-export async function auditVerify() {
-  const xs = await prisma.ledgerEntry.findMany({ orderBy: { id: "asc" } });
+// Batch size for the audit scan: bounded memory and bounded rows per
+// query, while the keyset loop guarantees every row is eventually checked.
+export const AUDIT_BATCH_SIZE = 1000;
+
+export async function auditVerify(batchSize: number = AUDIT_BATCH_SIZE) {
   let previous: string | null = null;
-  for (const [i, x] of xs.entries()) {
-    if (
-      x.prevHash !== previous ||
-      x.entryHash !== hash(previous, x, x.createdAt.toISOString())
-    )
-      return { ok: false, failedAt: i + 1 };
-    previous = x.entryHash;
+  let lastId: bigint | undefined = undefined;
+  let index = 0;
+  for (;;) {
+    const args: Prisma.LedgerEntryFindManyArgs = {
+      orderBy: { id: "asc" },
+      take: batchSize,
+    };
+    if (lastId !== undefined) args.where = { id: { gt: lastId } };
+    const xs = await prisma.ledgerEntry.findMany(args);
+    if (!xs.length) break;
+    for (const x of xs) {
+      index += 1;
+      if (
+        x.prevHash !== previous ||
+        x.entryHash !== hash(previous, x, x.createdAt.toISOString())
+      )
+        return { ok: false, failedAt: index };
+      previous = x.entryHash;
+      lastId = x.id;
+    }
+    if (xs.length < batchSize) break;
   }
-  return { ok: true, records: xs.length };
+  return { ok: true, records: index };
 }

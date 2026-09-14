@@ -15,9 +15,15 @@ describe("prometheus metrics", () => {
 
   it("counts rejected transfers as attempted and failed", async () => {
     const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
     const res = await app.inject({
       method: "POST",
       url: "/transactions",
+      headers: {
+        "x-service-id": "api-gateway",
+        "x-service-token": "test-gateway-token",
+      },
       payload: { amountCents: 100 },
     });
     expect(res.statusCode).toBe(400);

@@ -14,6 +14,9 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1),
   QUEUE_NAME: z.string().min(1),
   TRANSACTION_SERVICE_URL: z.string().min(1),
+  SERVICE_ID: z.string().min(1).default("payroll-service"),
+  SERVICE_TOKEN: z.string().min(1).default("novapay-dev-payroll-token"),
+  PEER_API_GATEWAY_TOKEN: z.string().default(""),
 });
 
 const loadEnv = () => {
@@ -41,6 +44,9 @@ const loadEnv = () => {
     REDIS_URL: env.REDIS_URL,
     QUEUE_NAME: env.QUEUE_NAME,
     TRANSACTION_SERVICE_URL: env.TRANSACTION_SERVICE_URL,
+    SERVICE_ID: env.SERVICE_ID,
+    SERVICE_TOKEN: env.SERVICE_TOKEN,
+    PEER_API_GATEWAY_TOKEN: env.PEER_API_GATEWAY_TOKEN,
   };
 };
 

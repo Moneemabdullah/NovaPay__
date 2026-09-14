@@ -108,6 +108,8 @@ export async function processPayroll(jobId: string) {
             const headers: Record<string, string> = {
               "content-type": "application/json",
               "idempotency-key": item.idempotencyKey,
+              "x-service-id": envVars.SERVICE_ID,
+              "x-service-token": envVars.SERVICE_TOKEN,
             };
             propagation.inject(context.active(), headers);
             const response = await fetch(

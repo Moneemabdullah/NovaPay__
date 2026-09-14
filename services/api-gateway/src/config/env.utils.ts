@@ -25,6 +25,8 @@ const envSchema = z.object({
     .min(1)
     .default("http://payroll-service:3005"),
   ADMIN_SERVICE_URL: z.string().min(1).default("http://admin-service:3006"),
+  SERVICE_ID: z.string().min(1).default("api-gateway"),
+  SERVICE_TOKEN: z.string().min(1).default("novapay-dev-gateway-token"),
 });
 
 const loadEnv = () => {
@@ -54,6 +56,8 @@ const loadEnv = () => {
     FX_SERVICE_URL: env.FX_SERVICE_URL,
     PAYROLL_SERVICE_URL: env.PAYROLL_SERVICE_URL,
     ADMIN_SERVICE_URL: env.ADMIN_SERVICE_URL,
+    SERVICE_ID: env.SERVICE_ID,
+    SERVICE_TOKEN: env.SERVICE_TOKEN,
   };
 };
 

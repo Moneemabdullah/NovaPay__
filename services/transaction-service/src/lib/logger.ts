@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import pino from "pino";
+import { context, trace } from "@opentelemetry/api";
 import { envVars } from "../config/env.utils.js";
 import { getContext } from "./context.js";
 
@@ -19,17 +20,22 @@ const streams: pino.StreamEntry[] = [
 ];
 
 if (isDev) {
-  streams.push({
-    level: "debug",
-    stream: pino.transport({
-      target: "pino-pretty",
-      options: {
-        colorize: true,
-        translateTime: "SYS:standard",
-        ignore: "pid,hostname",
-      },
-    }),
-  });
+  try {
+    streams.push({
+      level: "debug",
+      stream: pino.transport({
+        target: "pino-pretty",
+        options: {
+          colorize: true,
+          translateTime: "SYS:standard",
+          ignore: "pid,hostname",
+        },
+      }),
+    });
+  } catch {
+    // pino-pretty is a devDependency and is absent from pruned production
+    // images; stdout logging continues unaffected without it.
+  }
 }
 
 // Safety net: never let secret-shaped keys reach the log output. The KEK
@@ -47,6 +53,8 @@ export const REDACT_PATHS = [
   "*.authorization",
   "apiKey",
   "*.apiKey",
+  "x-service-token",
+  "*.x-service-token",
   "kek",
   "*.kek",
   "dek",
@@ -65,15 +73,24 @@ export function loggerOptions(): pino.LoggerOptions {
 
 export const logger = pino(loggerOptions(), pino.multistream(streams));
 
-const contextRecord = (moduleName: string) => {
+// Base fields for every contextual log. Existing requestId/userId/
+// transactionId names are preserved; trace_id/span_id are added only when
+// a valid OTel span is active (read-only API use, no SDK init here).
+export const logBase = (moduleName: string) => {
   const ctx = getContext();
-  return {
-    module: moduleName,
-    ...(ctx?.requestId ? { requestId: ctx.requestId } : {}),
-    ...(ctx?.userId ? { userId: ctx.userId } : {}),
-    ...(ctx?.transactionId ? { transactionId: ctx.transactionId } : {}),
-  };
+  const record: Record<string, string> = { module: moduleName };
+  if (ctx?.requestId) record.requestId = ctx.requestId;
+  if (ctx?.userId) record.userId = ctx.userId;
+  if (ctx?.transactionId) record.transactionId = ctx.transactionId;
+  const spanCtx = trace.getSpanContext(context.active());
+  if (spanCtx && trace.isSpanContextValid(spanCtx)) {
+    record.trace_id = spanCtx.traceId;
+    record.span_id = spanCtx.spanId;
+  }
+  return record;
 };
+
+const contextRecord = logBase;
 
 export const createLogger = (moduleName: string) => ({
   debug: (msg: string, data?: unknown) =>

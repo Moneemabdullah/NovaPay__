@@ -11,6 +11,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3004),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   DATABASE_URL: z.string().min(1),
+  SERVICE_ID: z.string().min(1).default("fx-service"),
+  SERVICE_TOKEN: z.string().min(1).default("novapay-dev-fx-token"),
+  PEER_TRANSACTION_SERVICE_TOKEN: z.string().default(""),
+  PEER_API_GATEWAY_TOKEN: z.string().default(""),
   FX_PROVIDER_DOWN: z
     .enum(["true", "false"])
     .default("false")
@@ -40,6 +44,10 @@ const loadEnv = () => {
     LOG_LEVEL: env.LOG_LEVEL,
     DATABASE_URL: env.DATABASE_URL,
     FX_PROVIDER_DOWN: env.FX_PROVIDER_DOWN,
+    SERVICE_ID: env.SERVICE_ID,
+    SERVICE_TOKEN: env.SERVICE_TOKEN,
+    PEER_TRANSACTION_SERVICE_TOKEN: env.PEER_TRANSACTION_SERVICE_TOKEN,
+    PEER_API_GATEWAY_TOKEN: env.PEER_API_GATEWAY_TOKEN,
   };
 };
 

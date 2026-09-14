@@ -550,6 +550,24 @@ Pre-configured with Prometheus datasource and the NovaPay dashboard:
 | Production | [http://localhost:3007](http://localhost:3007) | admin / admin |
 | Development | [http://localhost:3008](http://localhost:3008) | admin / admin |
 
+### Loki (Centralized Logs)
+
+Alloy collects every container's stdout/stderr and ships it to Loki
+(internal only — no host port; Grafana reaches it at `http://loki:3100`
+over the Docker network). Open Grafana → Explore → Loki datasource:
+
+```logql
+{service="transaction-service"}
+{service="api-gateway"} | json | level >= 50
+{service="payroll-service"} | json | trace_id = "abc…"
+{service="account-service"} | json | requestId = "req-…"
+```
+
+Stream labels are `service`, `container`, and `environment`
+(`service_name` is derived by Loki and also works). Everything else —
+level, message, request IDs, trace/span IDs, errors — stays inside the
+JSON line and is filtered at query time.
+
 ### cAdvisor (Container Metrics)
 
 | Stack | cAdvisor UI |

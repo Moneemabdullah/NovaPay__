@@ -12,6 +12,11 @@ export type LedgerEntryInput = {
 export type AccountState = {
   balances: Map<string, number>;
   appliedOps: string[];
+  // Test-only gate: when set, POSTs whose operationKey ends with the
+  // returned suffix wait for the deferred before applying. Unset by
+  // default, preserving production behavior.
+  gateSuffix?: string;
+  gate?: { promise: Promise<void>; reached: boolean };
 };
 
 export type LedgerState = {
@@ -21,6 +26,8 @@ export type LedgerState = {
   >;
   failBatches: boolean;
   failStatus: number;
+  // Test-only: fail exactly the next N batch POSTs, then succeed.
+  failNextBatches: number;
 };
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
@@ -74,6 +81,10 @@ export function startAccountMock() {
           balanceCents: state.balances.get(walletId) ?? 0,
         });
       }
+      if (state.gate && operationKey.endsWith(state.gateSuffix ?? "")) {
+        state.gate.reached = true;
+        await state.gate.promise;
+      }
       const current = state.balances.get(walletId) ?? 0;
       const next = current + deltaCents;
       if (next < 0)
@@ -102,6 +113,7 @@ export function startLedgerMock() {
     batches: new Map(),
     failBatches: false,
     failStatus: 500,
+    failNextBatches: 0,
   };
   const server = http.createServer(async (req, res) => {
     const { method, url = "" } = req;
@@ -118,6 +130,13 @@ export function startLedgerMock() {
     }
     if (method === "POST" && url === "/batches") {
       const body = await readBody(req);
+      if (state.failNextBatches > 0) {
+        state.failNextBatches -= 1;
+        return json(res, state.failStatus, {
+          error: "LEDGER_UNAVAILABLE",
+          message: "ledger unavailable (mock)",
+        });
+      }
       if (state.failBatches)
         return json(res, state.failStatus, {
           error: "LEDGER_UNAVAILABLE",

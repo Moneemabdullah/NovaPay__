@@ -41,10 +41,16 @@ describe("POST /jobs acceptance (integration)", () => {
 
   it("accepts a normal batch with 202", async () => {
     const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
     const employerAccountId = crypto.randomUUID();
     const res = await app.inject({
       method: "POST",
       url: "/jobs",
+      headers: {
+        "x-service-id": "api-gateway",
+        "x-service-token": "test-gateway-token",
+      },
       payload: {
         employerAccountId,
         items: [

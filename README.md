@@ -1,52 +1,41 @@
-﻿# NovaPay — Transaction Backend
+﻿# NovaPay
 
-Status: **implemented**. All six services run, connect to their own database, and expose the endpoints described below.
+NovaPay is a transaction-backend assessment project: seven Fastify microservices behind an API gateway implementing idempotent transfers, double-entry ledger accounting with cryptographic audit chaining, FX-quoted international transfers, queued payroll disbursement, and full metrics/logs/traces observability — all runnable locally with Docker Compose.
+
+## Overview
+
+Clients talk to the API gateway (via nginx) which routes to domain services. Each service owns a private PostgreSQL database (no shared DB, no cross-service reads); services coordinate over HTTP with idempotency keys. Redis backs the BullMQ payroll queue and distributed lease locks. Prometheus, Grafana, Loki/Alloy, Jaeger, and cAdvisor provide the observability stack.
 
 ## Architecture
 
 ```
-                         ┌──────────────────────┐
-                         │        CLIENT        │
-                         └──────────┬───────────┘
-                                    │
-                                    │ :8080
-                                    ▼
-                         ┌──────────────────────┐
-                         │     API GATEWAY      │
-                         │       :3000          │
-                         └──────────┬───────────┘
-                                    │
-          ┌─────────────┬───────────┼───────────┬─────────────┬─────────────┐
-          │             │           │           │             │             │
-          ▼             ▼           ▼           ▼             ▼             ▼
-   ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌───────────┐
-   │  ACCOUNT   │ │ TRANSACTION│ │  LEDGER  │ │    FX    │ │  PAYROLL   │ │   ADMIN   │
-   │   :3001    │ │   :3002    │ │  :3003   │ │  :3004   │ │   :3005    │ │  :3006    │
-   └─────┬──────┘ └─────┬──────┘ └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬─────┘
-         │              │             │            │             │              │
-         ▼              ▼             ▼            ▼             ▼              ▼
-   ┌───────────┐  ┌───────────┐ ┌──────────┐  ┌──────────┐ ┌───────────┐ ┌──────────┐
-   │ Account DB│  │Transaction│ │ Ledger DB│  │   FX DB  │ │ Payroll DB│ │ Admin DB │
-   │ PostgreSQL│  │    DB     │ │PostgreSQL│  │PostgreSQL│ │ PostgreSQL│ │PostgreSQL│
-   └───────────┘  │ PostgreSQL│ └──────────┘  └──────────┘ └───────────┘ └──────────┘
-                  └───────────┘
+                          ┌──────────────────────┐
+                          │        CLIENT        │
+                          └──────────┬───────────┘
+                                     │
+                                     │ :8080
+                                     ▼
+                          ┌──────────────────────┐
+                          │     API GATEWAY      │
+                          │       :3000          │
+                          └──────────┬───────────┘
+                                     │
+           ┌─────────────┬───────────┼───────────┬─────────────┬─────────────┐
+           │             │           │           │             │             │
+           ▼             ▼           ▼           ▼             ▼             ▼
+    ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌───────────┐
+    │  ACCOUNT   │ │ TRANSACTION│ │  LEDGER  │ │    FX    │ │  PAYROLL   │ │   ADMIN   │
+    │   :3001    │ │   :3002    │ │  :3003   │ │  :3004   │ │   :3005    │ │  :3006    │
+    └─────┬──────┘ └─────┬──────┘ └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬─────┘
+          │              │             │            │             │              │
+          ▼              ▼             ▼            ▼             ▼              ▼
+    ┌───────────┐  ┌───────────┐ ┌──────────┐  ┌──────────┐ ┌───────────┐ ┌──────────┐
+    │ Account DB│  │Transaction│ │ Ledger DB│  │   FX DB  │ │ Payroll DB│ │ Admin DB │
+    │ PostgreSQL│  │    DB     │ │PostgreSQL│  │PostgreSQL│ │ PostgreSQL│ │PostgreSQL│
+    │           │  │ PostgreSQL│ └──────────┘  └──────────┘ └───────────┘ └──────────┘
+    └───────────┘  └───────────┘
 
-
-                  ───────── TRANSACTION ORCHESTRATION ─────────
-
-                     ┌─────────────────────┐
-                     │  Transaction :3002  │
-                     └──────────┬──────────┘
-                                │
-                ┌───────────────┼────────────────┐
-                │               │                │
-                ▼               ▼                ▼
-          Account :3001     FX :3004        Ledger :3003
-          Wallet ops        Locked quote    Double-entry
-                                             batch
-
-
-                  ───────── ASYNCHRONOUS PAYROLL ─────────
+                   ───────── ASYNCHRONOUS PAYROLL ─────────
 
 ┌───────────────┐    ┌───────────────┐    ┌─────────────────┐    ┌────────────────┐
 │ Payroll :3005 │───▶│ Redis :6379   │───▶│ Worker          │───▶│ Transaction    │
@@ -55,527 +44,100 @@ Status: **implemented**. All six services run, connect to their own database, an
                      │ employer lock │    │ lease lock      │
                      └───────────────┘    └─────────────────┘
 
-                  ───────── OBSERVABILITY ─────────
+                   ───────── OBSERVABILITY ─────────
 
           ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-          │ Prometheus   │────▶│   Grafana    │     │    Jaeger    │
-          │    :9090     │     │    :3000     │     │    :16686    │
-          └──────────────┘     └──────────────┘     └──────────────┘
+          │ Prometheus   │────▶│   Grafana    │◀────│    Loki      │
+          │    :9090     │     │    :3007     │     │  (internal)  │
+          └──────────────┘     └──────────────┘     └──────▲───────┘
+                 ▲                     ▲                   │
+                 │                     │                Alloy ◀── Docker stdout
+          services :3000-3006    Jaeger :16686 ←── OTLP :4317── services
 ```
 
 No service reads or writes another service's database directly — all cross-service communication is over HTTP, enforced at the infra level by giving each service its own Postgres database (see `scripts/init-multi-db.sh`).
 
-## Setup
+## Key Engineering Features
 
-> **Full setup guide:** [docs/SETUP.md](docs/SETUP.md) — covers development, assessment, monitoring, running both stacks simultaneously, testing, troubleshooting, and all web interfaces.
+- **Idempotent transactions** — keyed requests with replay, race, expiry, and payload-mismatch handling (`decisions.md` Problem 1)
+- **Double-entry ledger** — balanced debit/credit batches, live invariant check, SHA-256 audit hash chain
+- **Crash recovery** — automatic scheduler reconciles stale `PROCESSING` transactions with ownership-safe Redis leases (`docs/HARDENING.md`); money-movement audit in [docs/MONEY_MOVEMENT_CONSISTENCY.md](docs/MONEY_MOVEMENT_CONSISTENCY.md)
+- **Payroll concurrency protection** — shared BullMQ queue, per-employer lease locks, parallel cross-employer processing
+- **Transaction history** — keyset/cursor pagination over composite wallet indexes, EXPLAIN-verified (`docs/TRANSACTION_HISTORY.md`)
+- **Redis coordination** — payroll employer locks and recovery leases (token-owned, Lua release, heartbeat renewal)
+- **Observability** — Prometheus metrics, Grafana dashboards, Loki centralized logging, Jaeger distributed tracing (`docs/OBSERVABILITY.md`)
+- **Request hardening** — Nginx 10 MB edge cap plus application batch validation (`docs/REQUEST_SIZE_LIMITS.md`)
+- **PII protection** — AES-256-GCM envelope encryption, write-only by design (`docs/ENCRYPTION_AND_TESTS.md`)
+- **Service-to-service security** — per-service identity tokens with route-scoped authorization, no shared global credential (`docs/SERVICE_TO_SERVICE_SECURITY.md`)
 
-```bash
-docker compose -f infra/docker-compose.yml up --build -d
-```
+## Services
 
-This starts Postgres (with 6 per-service databases pre-created + schema loaded), Redis, all six services, the API gateway on `:8080` via nginx, and the monitoring stack (Prometheus `:9090`, Grafana `:3007`, Jaeger UI `:16686`).
+| Service | Responsibility |
+|---|---|
+| API Gateway | External API entry point, routing, Swagger UI |
+| Account | Wallet/account operations, PII encryption |
+| Transaction | Transfer orchestration, idempotency, history |
+| Ledger | Double-entry ledger, invariant checks, audit chain |
+| FX | Exchange-rate quotes (60s TTL, single-use) |
+| Payroll | Queued batch disbursement with checkpoint resume |
+| Admin | Administrative operations |
 
-No `.env` files are required — all configuration is self-contained in `infra/docker-compose.yml`.
-
-Run a single service's tests locally:
-
-```bash
-cd services/transaction-service
-npm install
-npm test
-```
-
-Run integration tests (requires the Docker Postgres):
-
-```bash
-cd services/transaction-service
-npm run test:integration
-```
-
-## API Documentation
-
-Interactive Swagger UI is available when the stack is running:
-
-1. Start the NovaPay stack:
-   ```bash
-   docker compose -f infra/docker-compose.yml up --build -d
-   ```
-2. Open Swagger UI at: **http://localhost:8080/docs**
-3. The raw OpenAPI 3.0 JSON is available at: **http://localhost:8080/docs/json**
-
-Swagger UI lets you browse all gateway endpoints, view request/response schemas, and execute requests directly from the browser.
-
-## API Endpoint Summary
-
-All endpoints are accessed through the API gateway at `http://localhost:8080`.
-
-### Account Service
-
-#### POST /accounts/users
-
-Create a user (PII encrypted at rest).
+## Quick Start
 
 ```bash
-curl -s -X POST http://localhost:8080/accounts/users \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","fullName":"Alice Smith","phone":"+1234567890"}'
+# Full production/assessment stack (builds images)
+make up            # start (uses existing images)
+make build-up      # force rebuild + start
+make down          # stop and remove
+make logs          # tail logs
+make ps            # container status
+
+# Development stack (live code mounts, no rebuilds)
+make dev-up        # start dev stack
+make dev-down      # stop dev containers
+make dev-logs      # tail dev logs
+make dev-ps        # dev container status
 ```
 
-Response `201`:
-```json
-{
-  "id": "a1b2c3d4-...",
-  "email": "alice@example.com",
-  "createdAt": "2025-01-15T10:30:00.000Z"
-}
-```
+Full guide (environments, ports, databases, testing, troubleshooting): [docs/SETUP.md](docs/SETUP.md).
 
-> **Note:** PII fields (`fullName`, `phone`) are encrypted at rest and not returned in API responses. Only `id`, `email`, and `createdAt` are exposed.
+## Documentation
 
-#### POST /accounts/wallets
+### Architecture & Engineering
 
-Create a wallet for a user.
+- [decisions.md](decisions.md) — architecture decision records
+- [docs/HARDENING.md](docs/HARDENING.md) — logging, ledger audit batching, auto-recovery
+- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — metrics/logs/traces architecture
+- [docs/TRANSACTION_HISTORY.md](docs/TRANSACTION_HISTORY.md) — keyset pagination design
+- [docs/REQUEST_SIZE_LIMITS.md](docs/REQUEST_SIZE_LIMITS.md) — Nginx vs application limits
+- [docs/ENCRYPTION_AND_TESTS.md](docs/ENCRYPTION_AND_TESTS.md) — PII posture and test strategy
 
-```bash
-curl -s -X POST http://localhost:8080/accounts/wallets \
-  -H "Content-Type: application/json" \
-  -d '{"userId":"a1b2c3d4-...","currency":"USD"}'
-```
+### Setup & Operations
 
-Response `201`:
-```json
-{
-  "id": "w1x2y3z4-...",
-  "userId": "a1b2c3d4-...",
-  "currency": "USD",
-  "balanceCents": 0,
-  "version": 1,
-  "createdAt": "2025-01-15T10:30:00.000Z"
-}
-```
+- [docs/SETUP.md](docs/SETUP.md) — installation, environments, ports, testing, troubleshooting
 
-#### GET /accounts/wallets/:userId
+### API
 
-List wallets for a user.
-
-```bash
-curl -s http://localhost:8080/accounts/wallets/a1b2c3d4-...
-```
-
-Response `200`:
-```json
-{
-  "userId": "a1b2c3d4-...",
-  "wallets": [
-    {
-      "id": "w1x2y3z4-...",
-      "currency": "USD",
-      "balanceCents": "100000",
-      "version": 1,
-      "status": "active"
-    }
-  ]
-}
-```
-
-#### GET /accounts/wallets/:walletId/balance
-
-Get wallet balance.
-
-```bash
-curl -s http://localhost:8080/accounts/wallets/w1x2y3z4-.../balance
-```
-
-Response `200`:
-```json
-{
-  "id": "w1x2y3z4-...",
-  "userId": "a1b2c3d4-...",
-  "currency": "USD",
-  "balanceCents": "100000",
-  "version": 1,
-  "status": "active"
-}
-```
-
-#### POST /accounts/wallets/:walletId/operations
-
-Apply a wallet operation (debit/credit).
-
-```bash
-curl -s -X POST http://localhost:8080/accounts/wallets/w1x2y3z4-.../operations \
-  -H "Content-Type: application/json" \
-  -d '{"operationKey":"deposit-001","deltaCents":50000}'
-```
-
-Response `200`:
-```json
-{
-  "id": "op1a2b3c-...",
-  "walletId": "w1x2y3z4-...",
-  "operationKey": "deposit-001",
-  "deltaCents": 50000,
-  "balanceAfterCents": 150000,
-  "version": 2
-}
-```
-
-### Transaction Service
-
-#### POST /transactions
-
-Initiate a domestic transfer (requires `Idempotency-Key` header).
-
-```bash
-curl -s -X POST http://localhost:8080/transactions \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: txn-001" \
-  -d '{
-    "senderWalletId": "w1x2y3z4-...",
-    "recipientWalletId": "w5a6b7c8-...",
-    "amountCents": 10000,
-    "currency": "USD"
-  }'
-```
-
-Response `201`:
-```json
-{
-  "transactionId": "t9r8s7t6-...",
-  "status": "COMPLETED",
-  "senderWalletId": "w1x2y3z4-...",
-  "recipientWalletId": "w5a6b7c8-...",
-  "amountCents": 10000,
-  "currency": "USD"
-}
-```
-
-#### POST /transfers/international
-
-Initiate an international transfer (requires FX quote).
-
-```bash
-curl -s -X POST http://localhost:8080/transfers/international \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: intl-001" \
-  -d '{
-    "senderWalletId": "w1x2y3z4-...",
-    "recipientWalletId": "w5a6b7c8-...",
-    "amountCents": 10000,
-    "currency": "USD",
-    "quoteId": "q1u2o3t4-..."
-  }'
-```
-
-Response `201`:
-```json
-{
-  "transactionId": "t4e5f6g7-...",
-  "status": "COMPLETED"
-}
-```
-
-### Ledger Service
-
-#### POST /ledger/batches
-
-Write a double-entry ledger batch.
-
-```bash
-curl -s -X POST http://localhost:8080/ledger/batches \
-  -H "Content-Type: application/json" \
-  -d '{
-    "transactionId": "t9r8s7t6-...",
-    "entries": [
-      {"walletId":"w1x2y3z4-...","direction":"DEBIT","amountCents":10000,"currency":"USD"},
-      {"walletId":"w5a6b7c8-...","direction":"CREDIT","amountCents":10000,"currency":"USD"}
-    ]
-  }'
-```
-
-Response `201`:
-```json
-{
-  "transactionId": "t9r8s7t6-...",
-  "batchId": "b1a2t3c4-...",
-  "entries": [
-    {"id":"1","walletId":"w1x2y3z4-...","direction":"DEBIT","amountCents":"10000","currency":"USD"},
-    {"id":"2","walletId":"w5a6b7c8-...","direction":"CREDIT","amountCents":"10000","currency":"USD"}
-  ]
-}
-```
-
-#### GET /ledger/batches/:transactionId
-
-Retrieve a ledger batch.
-
-```bash
-curl -s http://localhost:8080/ledger/batches/t9r8s7t6-...
-```
-
-Response `200`:
-```json
-{
-  "transactionId": "t9r8s7t6-...",
-  "entries": [
-    {"id":"1","walletId":"w1x2y3z4-...","direction":"DEBIT","amountCents":"10000","currency":"USD"},
-    {"id":"2","walletId":"w5a6b7c8-...","direction":"CREDIT","amountCents":"10000","currency":"USD"}
-  ]
-}
-```
-
-#### GET /ledger/invariant-check
-
-Check ledger double-entry invariant.
-
-```bash
-curl -s http://localhost:8080/ledger/invariant-check
-```
-
-Response `200`:
-```json
-{
-  "invariantHolds": true,
-  "totalDebitCents": 150000,
-  "totalCreditCents": 150000,
-  "delta": 0
-}
-```
-
-#### GET /ledger/audit/verify
-
-Verify audit hash chain.
-
-```bash
-curl -s http://localhost:8080/ledger/audit/verify
-```
-
-Response `200`:
-```json
-{
-  "valid": true,
-  "entriesChecked": 12,
-  "firstEntryHash": "a1b2c3...",
-  "lastEntryHash": "x9y8z7..."
-}
-```
-
-### FX Service
-
-#### POST /fx/quote
-
-Create an FX quote (60s TTL).
-
-```bash
-curl -s -X POST http://localhost:8080/fx/quote \
-  -H "Content-Type: application/json" \
-  -d '{"baseCurrency":"USD","quoteCurrency":"BDT"}'
-```
-
-Response `201`:
-```json
-{
-  "id": "q1u2o3t4-...",
-  "baseCurrency": "USD",
-  "quoteCurrency": "BDT",
-  "rate": "110.50",
-  "expiresAt": "2025-01-15T10:31:00.000Z",
-  "used": false
-}
-```
-
-#### GET /fx/quote/:id
-
-Check FX quote validity.
-
-```bash
-curl -s http://localhost:8080/fx/quote/q1u2o3t4-...
-```
-
-Response `200`:
-```json
-{
-  "id": "q1u2o3t4-...",
-  "baseCurrency": "USD",
-  "quoteCurrency": "BDT",
-  "rate": "110.50",
-  "expiresAt": "2025-01-15T10:31:00.000Z",
-  "used": false
-}
-```
-
-#### POST /fx/quote/:id/consume
-
-Atomically consume an FX quote.
-
-```bash
-curl -s -X POST http://localhost:8080/fx/quote/q1u2o3t4-.../consume \
-  -H "Content-Type: application/json" \
-  -d '{"transactionId":"t4e5f6g7-..."}'
-```
-
-Response `200`:
-```json
-{
-  "id": "q1u2o3t4-...",
-  "baseCurrency": "USD",
-  "quoteCurrency": "BDT",
-  "rate": "110.50",
-  "used": true,
-  "usedByTransactionId": "t4e5f6g7-..."
-}
-```
-
-### Payroll Service
-
-#### POST /payroll/jobs
-
-Create a payroll batch job.
-
-```bash
-curl -s -X POST http://localhost:8080/payroll/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "employerAccountId": "acc-employer-001",
-    "items": [
-      {"recipientWalletId":"w5a6b7c8-...","amountCents":50000},
-      {"recipientWalletId":"w9i0j1k2-...","amountCents":75000}
-    ]
-  }'
-```
-
-Response `202`:
-```json
-{
-  "jobId": "pj1a2b3c-...",
-  "totalItems": 2,
-  "status": "queued"
-}
-```
-
-#### GET /payroll/jobs/:id
-
-Get payroll job status.
-
-```bash
-curl -s http://localhost:8080/payroll/jobs/pj1a2b3c-...
-```
-
-Response `200`:
-```json
-{
-  "id": "pj1a2b3c-...",
-  "employerAccountId": "acc-employer-001",
-  "status": "completed",
-  "totalItems": 2,
-  "processedItems": 2,
-  "checkpointIndex": 2
-}
-```
-
-### Admin Service
-
-#### POST /admin/incidents
-
-Record an incident note.
-
-```bash
-curl -s -X POST http://localhost:8080/admin/incidents \
-  -H "Content-Type: application/json" \
-  -d '{"adminUser":"ops@novapay.com","transactionId":"t9r8s7t6-...","note":"Manual review required"}'
-```
-
-Response `201`:
-```json
-{
-  "id": "inc1a2b3c-...",
-  "adminUser": "ops@novapay.com",
-  "transactionId": "t9r8s7t6-...",
-  "note": "Manual review required",
-  "createdAt": "2025-01-15T10:30:00.000Z"
-}
-```
-
-## Idempotency Scenarios (A–E)
-
-All five scenarios are implemented in the transaction service:
-
-**Scenario A — Same key arrives twice:**
-The idempotency key is the primary key of `idempotency_keys`. A duplicate request with a `completed` row replays the cached `response_body` and never re-enters the debit/credit path.
-
-**Scenario B — Three identical requests within 100ms:**
-All three attempt `INSERT INTO idempotency_keys (key, ...)`. Postgres's UNIQUE constraint on `key` allows exactly one INSERT to succeed; the other two get a `23505 unique_violation` and are routed to `handleExistingKey`, which either replays the winner's response or returns `202 processing` if the winner hasn't finished yet.
-
-**Scenario C — Crash between debit and credit:**
-The transaction row moves `PROCESSING → COMPLETED` or `PROCESSING → REVERSED`. A recovery endpoint (`POST /internal/recover`) scans for transactions stuck in `PROCESSING` older than 60 seconds and reconciles against the account service: if the debit was reversed, the transaction is marked `REVERSED`; if a ledger batch exists, the credit is completed.
-
-**Scenario D — Key expires after 24h, retried at 30h:**
-`handleExistingKey` checks `expires_at`. An expired key returns `409 IDEMPOTENCY_KEY_EXPIRED`.
-
-**Scenario E — Same key, different payload:**
-The request body is SHA-256 hashed. A second request with the same key but a different hash returns `409 IDEMPOTENCY_KEY_PAYLOAD_MISMATCH`.
-
-## Double-Entry Invariant
-
-Every money movement writes exactly two `ledger_entries` rows (one debit, one credit) inside a single DB transaction (`ledger-service`). The invariant `SUM(debit) == SUM(credit)` is checked live via `GET /ledger/invariant-check` and exposes a Prometheus gauge for alerting.
-
-An audit hash chain (`entry_hash = sha256(prev_hash + wallet_id + direction + amount + currency)`) is maintained across all entries. Verification is available at `GET /ledger/audit/verify`.
-
-## Crash Recovery
-
-The `POST /internal/recover` endpoint finds transactions stuck in `PROCESSING` for over 60 seconds and reconciles:
-
-1. **Check if the sender debit was reversed** — queries the account service for the reversal operation. If found, marks the transaction `REVERSED`.
-2. **Check if a ledger batch exists** — if yes, the debit and ledger are committed; completes the credit and marks `COMPLETED`.
-3. **Otherwise** — the debit was never applied or the process crashed before it; no action needed.
-
-The recovery is idempotent and never creates money.
-
-## FX Quote Strategy
-
-- 60-second TTL per quote
-- Single-use: atomic `UPDATE ... WHERE used=false AND expires_at>now()`
-- Provider outage returns `503 FX_PROVIDER_UNAVAILABLE` — never falls back to cached rates
-- Concurrent consumption attempts get `409 FX_QUOTE_ALREADY_USED` or `409 FX_QUOTE_EXPIRED`
-
-## Payroll Queue Design
-
-- One shared BullMQ queue (`QUEUE_NAME=payroll`) for all employers
-- Worker `concurrency: 5` — different employers process in parallel
-- Per-employer Redis lease lock (`payroll:employer-lock:<employerAccountId>`,
-  120s TTL, unique token, ownership-safe Lua release) serializes jobs of the
-  same employer without a global lock
-- Lock contention defers the job via BullMQ delayed requeue without consuming
-  one of its 3 retry attempts (`attempts: 3` is preserved for genuine failures)
-- Checkpoint-index pattern: `checkpoint_index` tracks the last successfully processed line item
-- On worker restart, processing resumes from `checkpoint_index`
-- Each line item has a deterministic idempotency key (`sha256(jobId:lineIndex)`)
-- Request size limits (Nginx 10 MB edge cap, 5000-item batch cap) are documented in [docs/REQUEST_SIZE_LIMITS.md](docs/REQUEST_SIZE_LIMITS.md)
-
-## Field-Level Encryption
-
-Envelope encryption for PII (fullName, phone):
-
-- Per-record Data Encryption Key (DEK) — random 32-byte key
-- DEK encrypts fields using AES-256-GCM (ciphertext + IV + auth tag)
-- DEK itself is encrypted ("wrapped") by a Key Encryption Key (KEK) from `FIELD_ENCRYPTION_KEK` env var
-- Stored in `users` table: `full_name_enc`, `full_name_iv`, `full_name_tag`, `dek_wrapped`
-- Write-only by design (no decrypt API — no read path needs plaintext); see [docs/ENCRYPTION_AND_TESTS.md](docs/ENCRYPTION_AND_TESTS.md)
+- Swagger UI: [http://localhost:8080/docs](http://localhost:8080/docs) (stack running)
+- OpenAPI JSON: [http://localhost:8080/docs/json](http://localhost:8080/docs/json)
 
 ## Observability
 
-- **Prometheus metrics**: HTTP request duration histograms, transaction counters, ledger invariant violations, FX provider failures
-- **Grafana dashboards**: provisioned with alerting rules
-- **Jaeger**: OTLP collectors configured at ports 4317/4318
+```
+Application → Docker stdout → Alloy → Loki → Grafana (logs, Explore)
+Application → OpenTelemetry → Jaeger (traces, :16686)
+Application → Prometheus → Grafana (metrics/dashboards, :9090/:3007)
+```
+
+Details: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+
+## API Documentation
+
+Endpoint details live in the OpenAPI spec — browse them at [http://localhost:8080/docs](http://localhost:8080/docs) with the stack running, or fetch [http://localhost:8080/docs/json](http://localhost:8080/docs/json).
 
 ## CI/CD
 
-GitHub Actions pipeline (`.github/workflows/ci.yml`):
-
-1. `dorny/paths-filter@v4` detects which services changed
-2. Per-service matrix: `npm ci` → unit tests → integration tests → TypeScript typecheck → version bump validation → Docker build
-3. `ci-status` gate job (required check) fails if any step fails
-4. Integration tests run against GitHub Actions Postgres/Redis service containers
+GitHub Actions pipeline (`.github/workflows/ci.yml`): path-filtered per-service matrix (`npm ci` → unit + integration tests → typecheck → coverage/audit → Docker build → version-gate), with `ci-status` as the single required check. Local equivalent: `make check`.
 
 ## Tradeoffs Made Under Time Pressure
 
@@ -583,14 +145,4 @@ GitHub Actions pipeline (`.github/workflows/ci.yml`):
 - Single shared Postgres instance with per-service databases (production would use independent instances)
 - No mTLS between services
 - No dead-letter queue for payroll items that exhaust BullMQ retries
-- Field-level encryption encrypts on write but decryption utility not yet wired into read paths
-
-## Production Improvements
-
-- Real KMS integration for KEK management
-- mTLS between services
-- Independent Postgres instances per service
-- Dead-letter queue handling for failed payroll items
-- Decryption utility for PII read paths
-- Chaos testing for FX-provider-down and ledger-service-down scenarios
-- Live FX provider integration with circuit breaker
+- PII encryption is write-only by design (no read path requires plaintext)

@@ -1,0 +1,1 @@
+CREATE INDEX idx_transactions_sender_created_id ON transactions(sender_wallet_id, created_at DESC, id DESC); CREATE INDEX idx_transactions_recipient_created_id ON transactions(recipient_wallet_id, created_at DESC, id DESC);
