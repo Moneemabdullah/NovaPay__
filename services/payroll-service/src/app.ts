@@ -6,6 +6,7 @@ import { requestIdPlugin } from "./middlewares/request-id.js";
 import { httpMetricsHooks } from "./lib/metrics.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
+import { registerServiceAuth } from "./middlewares/service-auth.js";
 import { registerTracingHooks } from "./middlewares/tracing.js";
 
 export async function buildApp() {
@@ -17,6 +18,11 @@ export async function buildApp() {
   });
   await app.register(helmet);
   await requestIdPlugin(app);
+  registerServiceAuth(
+    app,
+    () => ({ "api-gateway": envVars.PEER_API_GATEWAY_TOKEN }),
+    { "api-gateway": ["*"] },
+  );
   httpMetricsHooks(app);
   registerErrorHandler(app);
   registerTracingHooks(app);

@@ -47,6 +47,8 @@ export async function buildApp() {
         if (ctx) {
           propagation.inject(ctx, request.headers);
         }
+        request.headers["x-service-id"] = envVars.SERVICE_ID;
+        request.headers["x-service-token"] = envVars.SERVICE_TOKEN;
       },
     });
   }
