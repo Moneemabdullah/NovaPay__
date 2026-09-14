@@ -22,5 +22,7 @@ model Transaction {
   @@index([senderWalletId])
   @@index([recipientWalletId])
   @@index([createdAt])
+  @@index([senderWalletId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([recipientWalletId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("transactions")
 }
