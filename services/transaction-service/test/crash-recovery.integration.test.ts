@@ -7,6 +7,21 @@ import { startAccountMock, startLedgerMock } from "./helpers/mockServices.js";
 
 const AMOUNT = 10_000;
 
+// Service identities for the auth middleware (read per request from the
+// live envVars object, so direct assignment works in tests).
+const GW_ID = "api-gateway";
+const GW_TOKEN = "test-gateway-token";
+const SELF_ID = "transaction-service";
+const SELF_TOKEN = "test-transaction-token";
+const gwHeaders = {
+  "x-service-id": GW_ID,
+  "x-service-token": GW_TOKEN,
+};
+const selfHeaders = {
+  "x-service-id": SELF_ID,
+  "x-service-token": SELF_TOKEN,
+};
+
 describe("crash recovery (integration)", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let account: ReturnType<typeof startAccountMock>;
@@ -64,7 +79,7 @@ describe("crash recovery (integration)", () => {
     });
 
   const recover = () =>
-    app.inject({ method: "POST", url: "/internal/recover" });
+    app.inject({ method: "POST", url: "/internal/recover", headers: selfHeaders });
 
   const isBalancedBatch = (batch: { entries: { direction: string; amountCents: number }[] } | undefined) => {
     if (!batch || batch.entries.length !== 2) return false;
@@ -86,6 +101,8 @@ describe("crash recovery (integration)", () => {
   beforeAll(async () => {
     await prisma.transaction.deleteMany({});
     await prisma.idempotencyKey.deleteMany({});
+    envVars.PEER_API_GATEWAY_TOKEN = GW_TOKEN;
+    envVars.SERVICE_TOKEN = SELF_TOKEN;
     account = startAccountMock();
     ledger = startLedgerMock();
     await Promise.all([account.start(), ledger.start()]);
@@ -120,7 +137,7 @@ describe("crash recovery (integration)", () => {
     const res = await app.inject({
       method: "POST",
       url: "/transactions",
-      headers: { "idempotency-key": key },
+      headers: { "idempotency-key": key, ...gwHeaders },
       payload: {
         senderWalletId: sender,
         recipientWalletId: recipient,
@@ -260,6 +277,44 @@ describe("crash recovery (integration)", () => {
     expect(second.json()).toEqual({ recovered: 0 });
     expect(senderBalance()).toBe(100_000 - AMOUNT);
     expect(recipientBalance()).toBe(AMOUNT);
+  });
+
+  it("Auth: unauthenticated internal calls are rejected, gateway cannot reach /internal/recover", async () => {
+    // No credentials at all.
+    const anon = await app.inject({ method: "POST", url: "/internal/recover" });
+    expect(anon.statusCode).toBe(401);
+    // Gateway identity is valid but not authorized for internal routes.
+    const gw = await app.inject({
+      method: "POST",
+      url: "/internal/recover",
+      headers: gwHeaders,
+    });
+    expect(gw.statusCode).toBe(403);
+    // A gateway-identity caller cannot reach the endpoint even under a
+    // lookalike path: auth rejects before routing (403, fail closed).
+    // (At the real gateway the /transactions prefix maps this to a
+    // nonexistent route, so it 404s there too — verified live.)
+    const viaGatewayPath = await app.inject({
+      method: "POST",
+      url: "/transactions/internal/recover",
+      headers: gwHeaders,
+    });
+    expect(viaGatewayPath.statusCode).toBe(403);
+  });
+
+  it("Auth: rejection carries the caller requestId and never echoes credentials", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/internal/recover",
+      headers: {
+        "x-request-id": "req-auth-probe",
+        "x-service-id": "api-gateway",
+        "x-service-token": "wrong-token",
+      },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().requestId).toBe("req-auth-probe");
+    expect(res.body).not.toContain("wrong-token");
   });
 
   it("Test 5: ledger batches only exist for really-debited movements and are always balanced (ledger invariant holds at the boundary)", async () => {

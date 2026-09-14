@@ -140,6 +140,12 @@ describe("applyWalletOperation", () => {
 describe("POST /wallets/:walletId/operations validation", () => {
   it("rejects non-integer, zero, or missing deltaCents with 400", async () => {
     const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
+    const headers = {
+      "x-service-id": "api-gateway",
+      "x-service-token": "test-gateway-token",
+    };
     for (const body of [
       { operationKey: "k", deltaCents: 10.5 },
       { operationKey: "k", deltaCents: 0 },
@@ -149,6 +155,7 @@ describe("POST /wallets/:walletId/operations validation", () => {
       const res = await app.inject({
         method: "POST",
         url: "/wallets/wallet-1/operations",
+        headers,
         payload: body,
       });
       expect(res.statusCode).toBe(400);

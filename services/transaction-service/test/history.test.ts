@@ -264,6 +264,12 @@ describe("GET /transactions history", () => {
 
   it("route rejects malformed cursors, bad limits, and missing walletId", async () => {
     const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
+    const headers = {
+      "x-service-id": "api-gateway",
+      "x-service-token": "test-gateway-token",
+    };
     for (const query of [
       `/transactions?walletId=${WALLET_A}&cursor=!!!`,
       `/transactions?walletId=${WALLET_A}&cursor=${Buffer.from("{}").toString("base64url")}`,
@@ -274,7 +280,7 @@ describe("GET /transactions history", () => {
       `/transactions?walletId=${WALLET_A}&limit=101`,
       `/transactions?limit=10`,
     ]) {
-      const res = await app.inject({ method: "GET", url: query });
+      const res = await app.inject({ method: "GET", url: query, headers });
       expect(res.statusCode).toBe(400);
     }
   });

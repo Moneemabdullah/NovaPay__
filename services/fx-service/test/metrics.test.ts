@@ -18,9 +18,14 @@ describe("prometheus metrics", () => {
     const original = envVars.FX_PROVIDER_DOWN;
     try {
       envVars.FX_PROVIDER_DOWN = true;
+      envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
       const quote = await app.inject({
         method: "POST",
         url: "/quote",
+        headers: {
+          "x-service-id": "api-gateway",
+          "x-service-token": "test-gateway-token",
+        },
         payload: { baseCurrency: "USD", quoteCurrency: "EUR" },
       });
       expect(quote.statusCode).toBe(503);

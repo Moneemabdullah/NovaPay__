@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { buildApp } from "../src/app.js";
 import { MAX_PAYROLL_ITEMS } from "../src/routes/payroll.routes.js";
 
+const GW_HEADERS = {
+  "x-service-id": "api-gateway",
+  "x-service-token": "test-gateway-token",
+};
+
 const item = (i: number) => ({
   recipientWalletId: `wallet-${i}`,
   amountCents: 100 + i,
@@ -10,9 +15,12 @@ const item = (i: number) => ({
 describe("POST /jobs batch-size validation", () => {
   it("rejects batches over MAX_PAYROLL_ITEMS with 400 before touching the DB", async () => {
     const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
     const res = await app.inject({
       method: "POST",
       url: "/jobs",
+      headers: GW_HEADERS,
       payload: {
         employerAccountId: "emp-1",
         items: Array.from({ length: MAX_PAYROLL_ITEMS + 1 }, (_, i) =>
@@ -29,12 +37,14 @@ describe("POST /jobs batch-size validation", () => {
     const noEmployer = await app.inject({
       method: "POST",
       url: "/jobs",
+      headers: GW_HEADERS,
       payload: { items: [item(0)] },
     });
     expect(noEmployer.statusCode).toBe(400);
     const empty = await app.inject({
       method: "POST",
       url: "/jobs",
+      headers: GW_HEADERS,
       payload: { employerAccountId: "emp-1", items: [] },
     });
     expect(empty.statusCode).toBe(400);
