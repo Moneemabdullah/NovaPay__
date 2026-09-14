@@ -14,7 +14,7 @@ beforeAll(() => {
 // exact paths into the framework logger so secrets/PII never reach
 // access or error logs.
 describe("structured logger contract", () => {
-  it("redacts credentials, tokens, keys, and wrapped DEKs", () => {
+  it("redacts credentials, tokens, keys, wrapped DEKs, and service tokens", () => {
     for (const p of [
       "password",
       "token",
@@ -25,6 +25,8 @@ describe("structured logger contract", () => {
       "dek",
       "dekWrapped",
       "FIELD_ENCRYPTION_KEK",
+      "x-service-token",
+      "*.x-service-token",
     ])
       expect(REDACT_PATHS).toContain(p);
   });
