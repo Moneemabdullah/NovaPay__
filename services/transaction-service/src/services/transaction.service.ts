@@ -3,10 +3,66 @@ import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
 import { setContext } from "../lib/context.js";
 import { post, cents, sha, get } from "../lib/http.js";
+import { createLogger } from "../lib/logger.js";
 import { getTracer } from "../lib/otel.js";
 import { SpanStatusCode } from "@opentelemetry/api";
+import {
+  lockRedis,
+  acquireRecoveryLock,
+  releaseRecoveryLock,
+  renewRecoveryLock,
+  RECOVERY_LOCK_TTL_MS,
+  RECOVERY_LOCK_RENEW_MS,
+  type LockRedis,
+} from "../lib/recoveryLock.js";
 
-export async function execute(tx: Transaction, id?: string) {
+const execLog = createLogger("transaction");
+
+export async function execute(
+  tx: Transaction,
+  id?: string,
+  opts: { redis?: LockRedis } = {},
+) {
+  // Single mutual-exclusion point for EVERY execute entry path (live
+  // request, scheduler, manual recover): a second concurrent executor must
+  // never interleave reversal (compensation) with forward progress
+  // (ledger batch + credit), which would create money. Contended callers
+  // report the freshest known state instead of duplicating side effects.
+  // Only lock-acquisition failures fail open (Redis down); business errors
+  // from the run itself always propagate to the caller.
+  const redis = opts.redis ?? lockRedis();
+  let token: string | null;
+  try {
+    token = await acquireRecoveryLock(redis, tx.id);
+  } catch (e) {
+    // Redis unavailable: fail open to the pre-existing lockless behavior
+    // (idempotency guards still absorb most interleavings) but loudly.
+    execLog.warn("recovery lease unavailable; executing without exclusion", e);
+    return runExecute(tx, id);
+  }
+  if (token === null) {
+    const fresh = await prisma.transaction.findUnique({
+      where: { id: tx.id },
+      select: { status: true },
+    });
+    return { transactionId: tx.id, status: fresh?.status ?? "PROCESSING" };
+  }
+  const heartbeat = setInterval(() => {
+    renewRecoveryLock(redis, tx.id, token, RECOVERY_LOCK_TTL_MS).catch(
+      () => undefined,
+    );
+  }, RECOVERY_LOCK_RENEW_MS);
+  if (typeof (heartbeat as any).unref === "function")
+    (heartbeat as any).unref();
+  try {
+    return await runExecute(tx, id);
+  } finally {
+    clearInterval(heartbeat);
+    await releaseRecoveryLock(redis, tx.id, token).catch(() => undefined);
+  }
+}
+
+async function runExecute(tx: Transaction, id?: string) {
   const tracer = getTracer();
   return tracer.startActiveSpan("transaction.execute", async (span) => {
     try {
