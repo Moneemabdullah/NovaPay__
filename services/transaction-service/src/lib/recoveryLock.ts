@@ -21,6 +21,45 @@ export function recoveryLockKey(transactionId: string) {
   return `txn:recovery:${transactionId}`;
 }
 
+// Thrown only for Redis connectivity failures during lock acquisition —
+// never for business errors from the protected function (those propagate
+// untouched) and never for contention (which returns null).
+export class RecoveryLockError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options as any);
+    this.name = "RecoveryLockError";
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Bounded readiness wait: a freshly created client may still be
+// connecting (first command would otherwise reject instantly with
+// offlineQueue disabled). Steady-state cost is zero (status check only);
+// prolonged outage resolves false so the caller can fail open.
+export async function ensureRedis(
+  redis: LockRedis & { status?: unknown; ping?: () => Promise<unknown> },
+  timeoutMs = 2000,
+): Promise<boolean> {
+  try {
+    if ((redis as any)?.status === "ready") return true;
+    const ping = (redis as any)?.ping;
+    if (typeof ping !== "function") return true;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        await ping.call(redis);
+        return true;
+      } catch {
+        if (Date.now() >= deadline) return false;
+        await sleep(50);
+      }
+    }
+  } catch {
+    return false;
+  }
+}
+
 export async function acquireRecoveryLock(
   redis: LockRedis,
   transactionId: string,
@@ -91,7 +130,14 @@ export async function withRecoveryLock<T>(
   const ttlMs = opts.ttlMs ?? RECOVERY_LOCK_TTL_MS;
   const renewMs = opts.renewMs ?? RECOVERY_LOCK_RENEW_MS;
   const token = opts.token ?? crypto.randomUUID();
-  const acquired = await acquireRecoveryLock(redis, transactionId, token, ttlMs);
+  let acquired: string | null;
+  try {
+    acquired = await acquireRecoveryLock(redis, transactionId, token, ttlMs);
+  } catch (e) {
+    throw new RecoveryLockError("recovery lock acquisition failed", {
+      cause: e,
+    });
+  }
   if (!acquired) return null;
   const heartbeat = setInterval(() => {
     renewRecoveryLock(redis, transactionId, token, ttlMs).catch(() => undefined);
@@ -110,7 +156,20 @@ export async function withRecoveryLock<T>(
 let shared: Redis | undefined;
 
 export function lockRedis(): Redis {
-  if (!shared) shared = new Redis(envVars.REDIS_URL);
+  // enableOfflineQueue: false is load-bearing: when Redis is unreachable,
+  // lock commands must reject immediately (driving the fail-open path in
+  // execute()) instead of buffering forever behind a hung connection.
+  // The error listener prevents unhandled 'error' events from crashing
+  // long-lived processes on connection drops; command failures still
+  // reject to their callers normally.
+  if (!shared) {
+    shared = new Redis(envVars.REDIS_URL, {
+      enableOfflineQueue: false,
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+    });
+    shared.on("error", () => undefined);
+  }
   return shared;
 }
 

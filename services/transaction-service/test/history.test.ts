@@ -28,7 +28,9 @@ type Row = {
 // relies on: wallet OR-filter, composite (createdAt, id) cursor, DESC
 // ordering, and take. If the service changes its query shape, these tests
 // fail loudly instead of silently passing.
-const state = vi.hoisted(() => ({ rows: [] as Row[], lastArgs: null as any }));
+const state = vi.hoisted(
+  () => ({ rows: [] as Row[], lastArgs: null as any, failNext: null as any }),
+);
 
 function matchesWhere(row: Row, where: any): boolean {
   if (!where) return true;
@@ -56,6 +58,11 @@ vi.mock("../src/lib/prisma.js", () => ({
     transaction: {
       findMany: async (args: any) => {
         state.lastArgs = args;
+        if (state.failNext) {
+          const e = state.failNext;
+          state.failNext = null;
+          throw e;
+        }
         const rows = state.rows.filter((r) => matchesWhere(r, args.where));
         rows.sort((a, b) => {
           const t = b.createdAt.getTime() - a.createdAt.getTime();
@@ -106,6 +113,7 @@ function seedWallets() {
 beforeEach(() => {
   state.rows = [];
   state.lastArgs = null;
+  state.failNext = null;
 });
 
 async function collectAll(walletId: string, limit: number) {
@@ -260,6 +268,30 @@ describe("GET /transactions history", () => {
     });
     expect(decodeCursor("!!!not-base64!!!")).toBeNull();
     expect(decodeCursor(Buffer.from("{}").toString("base64url"))).toBeNull();
+  });
+
+  it("route rejects non-UUID wallet IDs with 400 (no path leak)", async () => {
+    // The mocked prisma cannot reproduce the real driver's UUID rejection,
+    // so emulate the exact P2023 shape the driver throws (verified live).
+    const err: any = new Error("Inconsistent column data");
+    err.name = "PrismaClientKnownRequestError";
+    err.code = "P2023";
+    state.failNext = err;
+    const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
+    const res = await app.inject({
+      method: "GET",
+      url: "/transactions?walletId=not-a-uuid&limit=5",
+      headers: {
+        "x-service-id": "api-gateway",
+        "x-service-token": "test-gateway-token",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("VALIDATION_ERROR");
+    expect(res.body).not.toContain("home/");
+    expect(res.body).not.toContain("history.service.ts");
   });
 
   it("route rejects malformed cursors, bad limits, and missing walletId", async () => {

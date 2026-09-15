@@ -8,9 +8,11 @@ import { getTracer } from "../lib/otel.js";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   lockRedis,
+  ensureRedis,
   acquireRecoveryLock,
   releaseRecoveryLock,
   renewRecoveryLock,
+  RecoveryLockError,
   RECOVERY_LOCK_TTL_MS,
   RECOVERY_LOCK_RENEW_MS,
   type LockRedis,
@@ -31,14 +33,26 @@ export async function execute(
   // Only lock-acquisition failures fail open (Redis down); business errors
   // from the run itself always propagate to the caller.
   const redis = opts.redis ?? lockRedis();
+  // Bounded readiness: a cold client may still be connecting (first
+  // command would otherwise reject instantly); a dead Redis resolves
+  // false quickly so we fail open instead of hanging.
   let token: string | null;
   try {
-    token = await acquireRecoveryLock(redis, tx.id);
+    if (!(await ensureRedis(redis)))
+      throw new RecoveryLockError("redis not ready");
+    token = await acquireRecoveryLock(redis, tx.id).catch((e) => {
+      throw new RecoveryLockError("recovery lock acquisition failed", {
+        cause: e,
+      });
+    });
   } catch (e) {
-    // Redis unavailable: fail open to the pre-existing lockless behavior
-    // (idempotency guards still absorb most interleavings) but loudly.
-    execLog.warn("recovery lease unavailable; executing without exclusion", e);
-    return runExecute(tx, id);
+    if (e instanceof RecoveryLockError) {
+      // Redis unavailable: fail open to the pre-existing lockless behavior
+      // (idempotency guards still absorb most interleavings) but loudly.
+      execLog.warn("recovery lease unavailable; executing without exclusion", e);
+      return runExecute(tx, id);
+    }
+    throw e;
   }
   if (token === null) {
     const fresh = await prisma.transaction.findUnique({

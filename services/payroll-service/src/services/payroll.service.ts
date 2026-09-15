@@ -5,7 +5,9 @@ import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
 import {
   lockRedis,
+  ensureLockRedis,
   withEmployerLock,
+  EmployerLockBusyError,
   type LockRedis,
 } from "../lib/employerLock.js";
 import { getTracer } from "../lib/otel.js";
@@ -66,6 +68,13 @@ export async function runPayrollJobExclusive(
 ) {
   const redis = deps.redis ?? lockRedis();
   const process = deps.process ?? processPayroll;
+  // An unready/unreachable Redis client cannot prove exclusivity: defer as
+  // busy (the worker requeues without burning an attempt) rather than run
+  // unguarded or crash on a connection error.
+  if (!(await ensureLockRedis(redis)))
+    throw new EmployerLockBusyError(
+      jobData.employerAccountId ?? jobData.jobId,
+    );
   let employerAccountId = jobData.employerAccountId;
   if (!employerAccountId) {
     const record = await prisma.payrollJob.findUnique({
@@ -112,10 +121,14 @@ export async function processPayroll(jobId: string) {
               "x-service-token": envVars.SERVICE_TOKEN,
             };
             propagation.inject(context.active(), headers);
+            // Bounded wait: a timeout fails the item into the existing
+            // BullMQ retry/checkpoint path — never retried inline, since
+            // the transfer may already have executed downstream.
             const response = await fetch(
               `${envVars.TRANSACTION_SERVICE_URL}/transactions`,
               {
                 method: "POST",
+                signal: AbortSignal.timeout(15_000),
                 headers,
                 body: JSON.stringify({
                   senderWalletId: job.employerAccountId,

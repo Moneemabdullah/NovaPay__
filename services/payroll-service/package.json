@@ -1,6 +1,6 @@
 {
   "name": "payroll-service",
-  "version": "1.0.10",
+  "version": "1.0.14",
   "type": "module",
   "private": true,
   "scripts": {

@@ -126,7 +126,11 @@ no-op tests).
   the next scheduler tick (≤60s) completes them; no slot is ever held
   waiting.
 - Fail-open on Redis outage trades exclusion for availability during the
-  outage window, loudly logged.
+  outage window, loudly logged. Lock acquisition is readiness-bounded
+  (waits briefly for a connecting client, then fails open) so a cold
+  client never runs lockless by accident; only Redis-class errors fail
+  open — business errors always propagate, and lock clients suppress
+  unhandled connection-event noise.
 
 ## Known Limitations
 

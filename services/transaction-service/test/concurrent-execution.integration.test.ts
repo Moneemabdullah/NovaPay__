@@ -100,24 +100,31 @@ describe("concurrent execution (integration)", () => {
     account.state.gate = { promise: reversalGate, reached: false };
 
     const a = execute(row as any);
-    // A debits, fails the ledger batch, and is now parked at the reversal.
-    await waitFor(
-      () => opCount(":debit") === 1 && (account.state.gate?.reached ?? false),
-      "A parked at reversal",
-    );
+    try {
+      // A debits, fails the ledger batch, and is now parked at the reversal
+      // holding the recovery lease. Parking is asserted first, so B below
+      // provably runs while A is mid-flight (not before/after it).
+      await waitFor(
+        () => opCount(":debit") === 1 && (account.state.gate?.reached ?? false),
+        "A parked at reversal",
+      );
 
-    // B: the "recovery" — runs while A is parked. Its reversal check sees
-    // no reversal yet, so without mutual exclusion it would proceed to
-    // ledger + credit while A reverses underneath it.
-    const bResult = await execute(row as any);
+      // B: the "recovery" — runs while A is parked. Its reversal check sees
+      // no reversal yet, so without mutual exclusion it would proceed to
+      // ledger + credit while A reverses underneath it.
+      const bResult = await execute(row as any);
 
-    // B must NOT have performed any side effect: it reports fresh state.
-    expect(bResult).toEqual({ transactionId: row.id, status: "PROCESSING" });
-    expect(opCount(":credit")).toBe(0);
-    expect(ledger.state.batches.has(row.id)).toBe(false);
-
-    // Let A finish its reversal path.
-    releaseReversal();
+      // B must NOT have performed any side effect: it reports the fresh
+      // state it observed instead of duplicating side effects.
+      expect(bResult).toEqual({ transactionId: row.id, status: "PROCESSING" });
+      expect(opCount(":credit")).toBe(0);
+      expect(ledger.state.batches.has(row.id)).toBe(false);
+    } finally {
+      // Always unpark A, even if an assertion above fails: otherwise its
+      // gated fetch aborts later as an unobserved rejection.
+      releaseReversal();
+    }
+    // A finishes its reversal path; the original ledger failure propagates.
     await expect(a).rejects.toThrow();
 
     // Final database state: REVERSED, sender whole, recipient untouched,
@@ -138,15 +145,18 @@ describe("concurrent execution (integration)", () => {
 
   it("two concurrent recoveries perform the movement exactly once", async () => {
     const row = await seedStuckTx();
-    const [r1, r2] = await Promise.all([
+    // allSettled: both promises are always observed, even if one rejects.
+    const [r1, r2] = await Promise.allSettled([
       execute(row as any),
       execute(row as any),
     ]);
     // Exactly one executor runs; the contender reports fresh state without
     // side effects. Emulate the next scheduler tick for the contender.
     for (const r of [r1, r2]) {
-      expect(r.transactionId).toBe(row.id);
-      if ((r as any).status !== "COMPLETED") {
+      expect(r.status).toBe("fulfilled");
+      const value = (r as PromiseFulfilledResult<any>).value;
+      expect(value.transactionId).toBe(row.id);
+      if (value.status !== "COMPLETED") {
         const retry = await execute(row as any);
         expect(retry).toEqual({ transactionId: row.id, status: "COMPLETED" });
       }

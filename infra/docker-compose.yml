@@ -10,6 +10,7 @@ x-node-env: &node-env
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
 
 services:
+  # ── Core infrastructure ───────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     environment:
@@ -42,6 +43,7 @@ services:
       api-gateway:
         condition: service_started
 
+  # ── Application services ──────────────────────────────────────────────────
   api-gateway:
     build: ../services/api-gateway
     environment:
@@ -158,7 +160,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # --- Checkpoint 3: Observability ---
+  # ── Observability ─────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.53.0
     volumes:

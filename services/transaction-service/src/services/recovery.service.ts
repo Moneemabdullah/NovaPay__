@@ -15,12 +15,18 @@ export const RECOVERY_STARTUP_DELAY_MS = 5_000;
 
 const log = createLogger("recovery");
 
+// Bounded (oldest first): a pathological backlog never blows up one tick;
+// leftovers are picked up by later ticks in deterministic order.
+export const RECOVERY_SCAN_LIMIT = 100;
+
 export async function findStaleTransactions() {
   return prisma.transaction.findMany({
     where: {
       status: "PROCESSING",
       processingStartedAt: { lt: new Date(Date.now() - STALE_AFTER_MS) },
     },
+    orderBy: { processingStartedAt: "asc" },
+    take: RECOVERY_SCAN_LIMIT,
   });
 }
 

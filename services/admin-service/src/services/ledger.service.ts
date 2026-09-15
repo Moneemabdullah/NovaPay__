@@ -11,11 +11,17 @@ function serviceIdentity(): Record<string, string> {
 export function checkLedgerInvariant() {
   const headers: Record<string, string> = { ...serviceIdentity() };
   propagation.inject(context.active(), headers);
-  return fetch(`${envVars.LEDGER_SERVICE_URL}/invariant-check`, { headers });
+  return fetch(`${envVars.LEDGER_SERVICE_URL}/invariant-check`, {
+    headers,
+    signal: AbortSignal.timeout(15_000),
+  });
 }
 
 export function verifyAudit() {
   const headers: Record<string, string> = { ...serviceIdentity() };
   propagation.inject(context.active(), headers);
-  return fetch(`${envVars.LEDGER_SERVICE_URL}/audit/verify`, { headers });
+  return fetch(`${envVars.LEDGER_SERVICE_URL}/audit/verify`, {
+    headers,
+    signal: AbortSignal.timeout(15_000),
+  });
 }

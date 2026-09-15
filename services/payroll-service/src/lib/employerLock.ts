@@ -89,10 +89,49 @@ export async function withEmployerLock<T>(
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Bounded readiness wait: a lazily created client may still be connecting,
+// and with offlineQueue disabled its first command would reject instantly.
+// Steady-state cost is zero (status check only); callers decide what an
+// unready client means (the wrapper below defers as busy).
+export async function ensureLockRedis(
+  redis: LockRedis & { status?: unknown; ping?: () => Promise<unknown> },
+  timeoutMs = 2000,
+): Promise<boolean> {
+  try {
+    if ((redis as any)?.status === "ready") return true;
+    const ping = (redis as any)?.ping;
+    if (typeof ping !== "function") return true;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        await ping.call(redis);
+        return true;
+      } catch {
+        if (Date.now() >= deadline) return false;
+        await sleep(50);
+      }
+    }
+  } catch {
+    return false;
+  }
+}
+
 let shared: Redis | undefined;
 
 export function lockRedis(): Redis {
-  if (!shared) shared = new Redis(envVars.REDIS_URL);
+  // enableOfflineQueue: false is load-bearing: when Redis is unreachable,
+  // lock commands must reject immediately (fast job failure into BullMQ
+  // retry) instead of buffering forever behind a hung connection.
+  if (!shared) {
+    shared = new Redis(envVars.REDIS_URL, {
+      enableOfflineQueue: false,
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+    });
+    shared.on("error", () => undefined);
+  }
   return shared;
 }
 
