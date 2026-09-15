@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Prisma } from "@prisma/client";
+// import { Prisma } from "@prisma/client";
 import { buildApp } from "../src/app.js";
 import { envVars } from "../src/config/env.utils.js";
 
@@ -12,7 +12,7 @@ vi.mock("../src/lib/prisma.js", () => ({
       {
         id: "q1",
         rate: { toString: () => "0.92" },
-        base_currency: "USD",
+        base_currency: "USD", 
         quote_currency: "EUR",
       },
     ],
