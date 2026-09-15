@@ -92,7 +92,15 @@ export async function withEmployerLock<T>(
 let shared: Redis | undefined;
 
 export function lockRedis(): Redis {
-  if (!shared) shared = new Redis(envVars.REDIS_URL);
+  // enableOfflineQueue: false is load-bearing: when Redis is unreachable,
+  // lock commands must reject immediately (fast job failure into BullMQ
+  // retry) instead of buffering forever behind a hung connection.
+  if (!shared)
+    shared = new Redis(envVars.REDIS_URL, {
+      enableOfflineQueue: false,
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+    });
   return shared;
 }
 

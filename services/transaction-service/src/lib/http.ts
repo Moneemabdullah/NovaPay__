@@ -21,7 +21,19 @@ function serviceIdentity(): Record<string, string> {
   };
 }
 
-export async function post(base: string, path: string, body: any, id?: string) {
+// Bounded per-call timeout for every downstream HTTP call. A timeout
+// surfaces as an ordinary failure into the caller's existing handling
+// (reversal, recovery, BullMQ attempts) — it is NEVER silently retried
+// here, because a timed-out financial mutation may already have executed.
+export const HTTP_TIMEOUT_MS = 15_000;
+
+export async function post(
+  base: string,
+  path: string,
+  body: any,
+  id?: string,
+  opts: { timeoutMs?: number } = {},
+) {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "x-request-id": id ?? crypto.randomUUID(),
@@ -32,6 +44,7 @@ export async function post(base: string, path: string, body: any, id?: string) {
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? HTTP_TIMEOUT_MS),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok)
@@ -42,13 +55,21 @@ export async function post(base: string, path: string, body: any, id?: string) {
   return d;
 }
 
-export async function get(base: string, path: string, id?: string) {
+export async function get(
+  base: string,
+  path: string,
+  id?: string,
+  opts: { timeoutMs?: number } = {},
+) {
   const headers: Record<string, string> = {
     "x-request-id": id ?? crypto.randomUUID(),
     ...serviceIdentity(),
   };
   propagation.inject(context.active(), headers);
-  const r = await fetch(base + path, { headers });
+  const r = await fetch(base + path, {
+    headers,
+    signal: AbortSignal.timeout(opts.timeoutMs ?? HTTP_TIMEOUT_MS),
+  });
   if (r.status === 404) return null;
   const d = await r.json().catch(() => ({}));
   if (!r.ok)

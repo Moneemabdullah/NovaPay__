@@ -112,10 +112,14 @@ export async function processPayroll(jobId: string) {
               "x-service-token": envVars.SERVICE_TOKEN,
             };
             propagation.inject(context.active(), headers);
+            // Bounded wait: a timeout fails the item into the existing
+            // BullMQ retry/checkpoint path — never retried inline, since
+            // the transfer may already have executed downstream.
             const response = await fetch(
               `${envVars.TRANSACTION_SERVICE_URL}/transactions`,
               {
                 method: "POST",
+                signal: AbortSignal.timeout(15_000),
                 headers,
                 body: JSON.stringify({
                   senderWalletId: job.employerAccountId,
