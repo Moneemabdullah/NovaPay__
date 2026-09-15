@@ -5,7 +5,9 @@ import { prisma } from "../lib/prisma.js";
 import { envVars } from "../config/env.utils.js";
 import {
   lockRedis,
+  ensureLockRedis,
   withEmployerLock,
+  EmployerLockBusyError,
   type LockRedis,
 } from "../lib/employerLock.js";
 import { getTracer } from "../lib/otel.js";
@@ -66,6 +68,13 @@ export async function runPayrollJobExclusive(
 ) {
   const redis = deps.redis ?? lockRedis();
   const process = deps.process ?? processPayroll;
+  // An unready/unreachable Redis client cannot prove exclusivity: defer as
+  // busy (the worker requeues without burning an attempt) rather than run
+  // unguarded or crash on a connection error.
+  if (!(await ensureLockRedis(redis)))
+    throw new EmployerLockBusyError(
+      jobData.employerAccountId ?? jobData.jobId,
+    );
   let employerAccountId = jobData.employerAccountId;
   if (!employerAccountId) {
     const record = await prisma.payrollJob.findUnique({
