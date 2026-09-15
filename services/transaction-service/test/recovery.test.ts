@@ -118,6 +118,12 @@ describe("recoverStaleTransactions", () => {
     const cutoff = state.findManyArgs.where.processingStartedAt.lt.getTime();
     expect(cutoff).toBeLessThanOrEqual(before);
     expect(cutoff).toBeGreaterThan(before - STALE_AFTER_MS - 5000);
+    // Bounded scan: one tick never loads an unbounded backlog; leftovers
+    // are picked up by later ticks in deterministic oldest-first order.
+    expect(state.findManyArgs.take).toBeLessThanOrEqual(100);
+    expect(state.findManyArgs.orderBy).toEqual({
+      processingStartedAt: "asc",
+    });
   });
 
   it("leaves fresh PROCESSING transactions untouched", async () => {
@@ -220,6 +226,26 @@ describe("withRecoveryLock (lease mechanics)", () => {
     gate.resolve();
     await run;
     expect(redis.has("txn:recovery:txn-1")).toBe(false);
+  });
+});
+
+describe("lock client resilience", () => {
+  it("unreachable Redis rejects fast instead of buffering forever", async () => {
+    const { Redis } = await import("ioredis");
+    const client = new Redis("redis://127.0.0.1:1", {
+      enableOfflineQueue: false,
+      connectTimeout: 1000,
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null,
+    });
+    client.on("error", () => {});
+    // Must reject (driving execute()'s fail-open path), never hang:
+    // vitest's default 5s timeout fails the test on buffering behavior.
+    const { acquireRecoveryLock } = await import(
+      "../src/lib/recoveryLock.js"
+    );
+    await expect(acquireRecoveryLock(client as any, "txn-x")).rejects.toThrow();
+    client.disconnect();
   });
 });
 
