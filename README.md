@@ -111,6 +111,11 @@ Full guide (environments, ports, databases, testing, troubleshooting): [docs/SET
 - [docs/TRANSACTION_HISTORY.md](docs/TRANSACTION_HISTORY.md) — keyset pagination design
 - [docs/REQUEST_SIZE_LIMITS.md](docs/REQUEST_SIZE_LIMITS.md) — Nginx vs application limits
 - [docs/ENCRYPTION_AND_TESTS.md](docs/ENCRYPTION_AND_TESTS.md) — PII posture and test strategy
+- [docs/SERVICE_TO_SERVICE_SECURITY.md](docs/SERVICE_TO_SERVICE_SECURITY.md) — internal identity and authorization
+- [docs/RESILIENCE.md](docs/RESILIENCE.md) — timeouts and failure semantics
+- [docs/API_SECURITY.md](docs/API_SECURITY.md) — input validation and error hygiene
+- [docs/DATABASE_HARDENING.md](docs/DATABASE_HARDENING.md) — constraints, bounded reads, index evidence
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system flows and trust boundaries
 
 ### Setup & Operations
 
@@ -118,6 +123,7 @@ Full guide (environments, ports, databases, testing, troubleshooting): [docs/SET
 
 ### API
 
+- [docs/API.md](docs/API.md) — endpoint map, auth, pagination, error conventions
 - Swagger UI: [http://localhost:8080/docs](http://localhost:8080/docs) (stack running)
 - OpenAPI JSON: [http://localhost:8080/docs/json](http://localhost:8080/docs/json)
 
@@ -133,7 +139,19 @@ Details: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ## API Documentation
 
-Endpoint details live in the OpenAPI spec — browse them at [http://localhost:8080/docs](http://localhost:8080/docs) with the stack running, or fetch [http://localhost:8080/docs/json](http://localhost:8080/docs/json).
+Endpoint details live in [docs/API.md](docs/API.md) and the OpenAPI spec — browse them at [http://localhost:8080/docs](http://localhost:8080/docs) with the stack running, or fetch [http://localhost:8080/docs/json](http://localhost:8080/docs/json).
+
+## Technology Stack
+
+Fastify + TypeScript (Node 20) · PostgreSQL 16 + Prisma 6 · Redis 7 + BullMQ 5 · Nginx · Prometheus + Grafana + Loki/Alloy · Jaeger/OpenTelemetry · Docker Compose · Vitest · GitHub Actions.
+
+## Testing & Verification
+
+`make check` runs the local gate (typecheck + lint + unit + integration tests). Money-movement, concurrency, crash-recovery, and auth behaviors are additionally proven by integration suites plus live-stack verification each phase (see phase docs above).
+
+## Current Limitations
+
+Single-host assessment stack: shared Postgres role/instance, dev-default service tokens (rotate before any real deployment), no mTLS, no rate limiting, no dead-letter queue, 7-day local log retention. Each limitation is recorded with its rationale in the linked docs above.
 
 ## CI/CD
 

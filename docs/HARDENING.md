@@ -1,4 +1,44 @@
-# NovaPay — Hardening Phase (Logging, Ledger Scans, Auto-Recovery)
+# NovaPay — Hardening Index
+
+Completed engineering fixes, by category. Each item links to the
+document with full analysis; this file then details the original
+logging/audit/recovery wave below.
+
+**Correctness:** idempotent disbursement (`decisions.md` Problem 1) ·
+money-movement consistency incl. concurrency audit
+(`docs/MONEY_MOVEMENT_CONSISTENCY.md`) · ledger invariants + batched
+audit (below) · crash/auto recovery (below) · keyset history pagination
+(`docs/TRANSACTION_HISTORY.md`)
+
+**Reliability:** automatic recovery scheduler · Redis ownership-safe
+leases · 15s downstream timeouts, never retried inline
+(`docs/RESILIENCE.md`) · bounded scans everywhere
+(`docs/DATABASE_HARDENING.md`)
+
+**Security:** S2S bearer identity + route authorization
+(`docs/SERVICE_TO_SERVICE_SECURITY.md`) · internal route protection ·
+input validation + error sanitization (`docs/API_SECURITY.md`) ·
+logging redaction (below) · write-only PII
+(`docs/ENCRYPTION_AND_TESTS.md`)
+
+**Performance:** keyset pagination · audit batching · EXPLAIN-verified
+indexes · bounded queries (`docs/DATABASE_HARDENING.md`,
+`docs/TRANSACTION_HISTORY.md`)
+
+**Observability:** Prometheus/Grafana · Loki/Alloy · Jaeger/OTel
+(`docs/OBSERVABILITY.md`)
+
+**Testing:** unit, integration, concurrency, crash-recovery, and live
+verification suites run per phase (`make check`).
+
+**Intentionally deferred (not bugs):** mTLS/service mesh · Sentry ·
+external alerting · read replicas/partitioning · per-service DB roles
+and secret rotation · request rate limiting · object-storage payroll
+uploads. Each is documented as future work in its respective doc.
+
+---
+
+# Hardening Phase (Logging, Ledger Scans, Auto-Recovery)
 
 ## Problem
 

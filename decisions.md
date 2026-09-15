@@ -11,8 +11,8 @@ system, per the assessment's requirements.
 A duplicate request with a `status = 'completed'` row replays the cached
 `response_body` and never re-enters the debit/credit path.
 
-**Code path:** `transaction-service/src/services/transaction.service.ts:17-26`
-— `execute()` checks the current status; if `COMPLETED`, it reads the cached
+**Code path:** `transaction-service/src/services/transaction.service.ts` (`execute()`)
+— it checks the current status; if `COMPLETED`, it reads the cached
 response from `idempotency_keys` and returns immediately.
 
 ### Scenario B: Three identical requests within 100ms
@@ -25,18 +25,17 @@ returns `202 processing` if the winner hasn't finished yet. The two losing
 requests never write a transaction or ledger row — the race is resolved by
 Postgres's own uniqueness enforcement, not application-level locking.
 
-**Code path:** `transaction-service/src/services/transaction.service.ts:216-261`
-— `initiate()` wraps the idempotency key create + transaction create in
-`prisma.$transaction`. The `P2002` error (unique violation) is caught at
-line 239 and routed to the duplicate handling path at lines 240-260.
+**Code path:** `transaction-service/src/services/transaction.service.ts` (`initiate()`)
+— it wraps the idempotency key create + transaction create in
+`prisma.$transaction`. The `P2002` error (unique violation) is caught and routed to the duplicate handling path below.
 
 ### Scenario C: Crash between debit and credit (atomicity)
 
 **Mechanism:** The transaction row moves `PROCESSING → COMPLETED` or
-`PROCESSING → REVERSED` as explicit states. A recovery endpoint
-(`POST /internal/recover`) periodically scans for transactions stuck in
-`PROCESSING` older than 60 seconds and reconciles against the account
-service:
+`PROCESSING → REVERSED` as explicit states. An in-process scheduler
+ticks every 60s (plus a manual `POST /internal/recover` trigger) to
+reconcile transactions stuck in `PROCESSING` older than 60 seconds
+against the account service:
 
 1. If the sender's debit was reversed (detected via operation lookup on the
    account service), the transaction is marked `REVERSED` — no ledger batch,
@@ -47,8 +46,8 @@ service:
    no action needed.
 
 **Code paths:**
-- Execute: `transaction-service/src/services/transaction.service.ts:7-182`
-- Recovery: `transaction-service/src/routes/transaction.routes.ts:19-28`
+- Execute: `transaction-service/src/services/transaction.service.ts` (`execute()`)
+- Recovery: `transaction-service/src/services/recovery.service.ts` (`recoverStaleTransactions()`) and `transaction-service/src/routes/transaction.routes.ts` (`POST /internal/recover`)
 
 The two-phase status update, plus the ledger's own all-or-nothing batch
 INSERT (single DB transaction wrapping both entries in `ledger-service`),
@@ -61,7 +60,7 @@ together prevent a permanently unbalanced ledger.
 the request will be treated as new on resubmission — it is never silently
 replayed and never silently reprocessed as a duplicate.
 
-**Code path:** `transaction-service/src/services/transaction.service.ts:242-248`
+**Code path:** `transaction-service/src/services/transaction.service.ts` (`initiate()`, expiry check)
 
 ### Scenario E: Same key, different payload
 
@@ -70,7 +69,7 @@ key. A second request with the same key but a different hash returns
 `409 IDEMPOTENCY_KEY_PAYLOAD_MISMATCH` — it is rejected outright, not merged
 or overwritten.
 
-**Code path:** `transaction-service/src/services/transaction.service.ts:249-255`
+**Code path:** `transaction-service/src/services/transaction.service.ts` (`initiate()`, hash check)
 
 **Concurrency addendum:** mutual exclusion now lives *inside* `execute()`
 (audit finding: a live request racing recovery could interleave reversal
@@ -158,9 +157,9 @@ Provider outage returns `503 FX_PROVIDER_UNAVAILABLE` and never falls back
 to a cached rate.
 
 **Code paths:**
-- Quote creation: `fx-service/src/services/fx.service.ts:11-24`
-- Atomic consume: `fx-service/src/services/fx.service.ts:30-53`
-- Provider down: `fx-service/src/routes/fx.routes.ts:28-36`
+- Quote creation: `fx-service/src/services/fx.service.ts` (`createQuote()`)
+- Atomic consume: `consumeQuote()`
+- Provider down: `fx-service/src/routes/fx.routes.ts`
 
 ## Problem 4 — Field-Level Encryption
 
@@ -185,7 +184,7 @@ returns only `{id, email, createdAt}`.
 
 Every `ledger_entries` row stores `entry_hash = sha256(prev_entry_hash + wallet_id + direction + amount + currency)`. Because each hash depends on the previous one, altering any historical row's amount or direction changes that row's hash and therefore invalidates every hash computed after it — a verification pass that recomputes the chain from the first row will detect exactly where tampering occurred.
 
-**Code path:** `ledger-service/src/services/ledger.service.ts:21-32, 133-144`
+**Code path:** `ledger-service/src/services/ledger.service.ts` (`hash()`, `auditVerify()`)
 
 ## Double-Entry Ledger Invariant
 
@@ -197,15 +196,15 @@ The invariant is enforced at three levels:
 3. **Audit verification** — `GET /ledger/audit/verify` recomputes the hash chain from the first entry to detect any historical tampering.
 
 **Code paths:**
-- Validation: `ledger-service/src/services/ledger.service.ts:36-73`
-- Invariant check: `ledger-service/src/services/ledger.service.ts:133-148`
-- Audit verify: `ledger-service/src/services/ledger.service.ts:150-162`
+- Validation: `ledger-service/src/services/ledger.service.ts` (`validateBatch()`)
+- Invariant check: `invariantCheck()`
+- Audit verify: `auditVerify()` (keyset-batched)
 - Metrics: `ledger-service/src/lib/metrics.ts` — `ledgerInvariantViolations` Counter
 
 ## Observability
 
 **OpenTelemetry (distributed tracing):**
-All five services are instrumented with OTel traces that reach Jaeger. The implementation uses `@opentelemetry/sdk-node` with `NodeSDK` class and `SimpleSpanProcessor` for reliable span export via gRPC to `http://jaeger:4317`.
+All seven services are instrumented with OTel traces that reach Jaeger. The implementation uses `@opentelemetry/sdk-node` with `NodeSDK` class and `SimpleSpanProcessor` for reliable span export via gRPC to `http://jaeger:4317`.
 
 - **HTTP-level spans:** Fastify `onRequest`/`onResponse` hooks create a span per incoming request (method, URL, status code). Registered via `registerTracingHooks(app)` in `api-gateway`, `account-service`, and `fx-service`.
 - **Business-level spans:** `transaction-service` creates manual spans for `transaction.initiate`, `transaction.execute`, `debit.sender`, `ledger.createBatch`, and `credit.recipient`. `ledger-service` creates a span for `ledger.createBatch`.
@@ -274,6 +273,22 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) with a strict gate:
   (`SET NX PX` + token Lua release + heartbeat renewal); `REDIS_URL`
   added to transaction-service env (both compose files). See
   `docs/HARDENING.md`.
+- **Bounded downstream timeouts** — every service-to-service fetch
+  carries a 15s abort bound; timeouts feed existing compensation
+  (reversal, BullMQ attempts, scheduler) and are never retried inline,
+  since a timed-out mutation may already have executed. No gateway or
+  server global timeout (must not amputate legitimate transfers).
+  See `docs/RESILIENCE.md`.
+- **Input hygiene** — missing JSON bodies normalize to `{}` so routes
+  return their own 400s; Prisma client-validation errors (malformed
+  UUIDs/scalars) map to a fixed-message 400 instead of leaking paths.
+  Rate limiting deferred: idempotency absorbs replays and there is no
+  identity to key limits on. See `docs/API_SECURITY.md`.
+- **Recovery scan bound** — stale scan is `take: 100` oldest-first
+  (leftovers converge on later ticks); measured 3 ms via the existing
+  status index, so no new index. Single-column wallet indexes kept:
+  removal showed no benefit and the planner mixes them into BitmapOr
+  plans. See `docs/DATABASE_HARDENING.md`.
 
 ## Tradeoffs Made Under Time Pressure
 
@@ -281,7 +296,7 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) with a strict gate:
 - Single shared Postgres instance with per-service databases (production would use independent instances)
 - No mTLS between services
 - No dead-letter queue for payroll items that exhaust BullMQ retries
-- Field-level encryption encrypts on write but decryption utility not yet wired into read paths
+- PII encryption is write-only by design (no read path requires plaintext)
 
 ## What We'd Add Before Production
 
@@ -290,5 +305,4 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) with a strict gate:
 - Per-service independent Postgres instances instead of one shared instance with per-service databases
 - Dead-letter queue handling for payroll items that exhaust BullMQ retry attempts
 - Chaos testing for the FX-provider-down and ledger-service-down scenarios
-- Decryption utility for PII read paths
 - Live FX provider integration with circuit breaker
