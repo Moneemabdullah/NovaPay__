@@ -194,6 +194,40 @@ const openapiDocument: OpenAPIV3.Document = {
           },
         },
       },
+      TransactionHistoryItem: {
+        type: "object",
+        properties: {
+          id: { type: "string", format: "uuid" },
+          senderWalletId: { type: "string", format: "uuid" },
+          recipientWalletId: { type: "string", format: "uuid" },
+          amountCents: { type: "string", description: "BigInt serialized as string" },
+          currency: { type: "string", pattern: "^[A-Z]{3}$" },
+          destinationAmountCents: { type: "string", nullable: true },
+          destinationCurrency: { type: "string", nullable: true },
+          fxRate: { type: "string", nullable: true },
+          status: {
+            type: "string",
+            enum: ["PENDING", "PROCESSING", "COMPLETED", "FAILED", "REVERSED"],
+          },
+          createdAt: { type: "string", format: "date-time" },
+          completedAt: { type: "string", format: "date-time", nullable: true },
+        },
+      },
+      TransactionHistoryResponse: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: { $ref: "#/components/schemas/TransactionHistoryItem" },
+          },
+          nextCursor: {
+            type: "string",
+            nullable: true,
+            description: "Opaque cursor for the next page; null on the last page",
+          },
+          hasMore: { type: "boolean" },
+        },
+      },
       LedgerEntryInput: {
         type: "object",
         properties: {
@@ -721,6 +755,56 @@ const openapiDocument: OpenAPIV3.Document = {
       },
     },
     "/transactions": {
+      get: {
+        tags: ["Transaction"],
+        summary: "List transaction history for a wallet",
+        description:
+          "Keyset-paginated history (newest first) for transactions where " +
+          "the wallet is sender or recipient. Cursor is opaque; default " +
+          "limit 50, maximum 100.",
+        operationId: "listTransactionHistory",
+        parameters: [
+          {
+            name: "walletId",
+            in: "query",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Wallet to list history for",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+            description: "Page size",
+          },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Opaque cursor from a previous nextCursor",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "One page of transaction history",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/TransactionHistoryResponse" },
+              },
+            },
+          },
+          "400": {
+            description: "Missing walletId, invalid limit, or malformed cursor",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
       post: {
         tags: ["Transaction"],
         summary: "Initiate a domestic transfer",

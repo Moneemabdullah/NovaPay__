@@ -13,7 +13,7 @@ describe("prometheus metrics", () => {
     expect(res.body).toContain("process_start_time_seconds");
   });
 
-  it("counts rejected transfers as attempted and failed", async () => {
+  it("missing body normalizes to the route's own 400 (never a 500 TypeError)", async () => {
     const app = await buildApp();
     const { envVars } = await import("../src/config/env.utils.js");
     envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
@@ -24,15 +24,37 @@ describe("prometheus metrics", () => {
         "x-service-id": "api-gateway",
         "x-service-token": "test-gateway-token",
       },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("IDEMPOTENCY_KEY_REQUIRED");
+  });
+
+  it("counts rejected transfers as attempted and failed", async () => {
+    const app = await buildApp();
+    const { envVars } = await import("../src/config/env.utils.js");
+    envVars.PEER_API_GATEWAY_TOKEN = "test-gateway-token";
+    const metricValue = async (name: string) => {
+      const m = await app.inject({ url: "/metrics" });
+      const match = m.body.match(
+        new RegExp(`${name}\\{[^}]*\\} (\\d+(?:\\.\\d+)?)`),
+      );
+      return match ? Number(match[1]) : 0;
+    };
+    // Baseline first: earlier tests in this file also POST, and the
+    // registry is process-global — assert the delta, not the absolute.
+    const attemptedBefore = await metricValue("transactions_total");
+    const failedBefore = await metricValue("transactions_failed_total");
+    const res = await app.inject({
+      method: "POST",
+      url: "/transactions",
+      headers: {
+        "x-service-id": "api-gateway",
+        "x-service-token": "test-gateway-token",
+      },
       payload: { amountCents: 100 },
     });
     expect(res.statusCode).toBe(400);
-    const m = await app.inject({ url: "/metrics" });
-    expect(m.body).toContain(
-      'transactions_total{service="transaction-service",type="domestic"} 1',
-    );
-    expect(m.body).toContain(
-      'transactions_failed_total{service="transaction-service",type="domestic"} 1',
-    );
+    expect(await metricValue("transactions_total")).toBe(attemptedBefore + 1);
+    expect(await metricValue("transactions_failed_total")).toBe(failedBefore + 1);
   });
 });

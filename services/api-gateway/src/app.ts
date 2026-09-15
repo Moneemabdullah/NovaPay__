@@ -31,6 +31,10 @@ export async function buildApp() {
 
   await app.register(helmet);
   await requestIdPlugin(app);
+  // NOTE: no body-normalization hook here on purpose — this service only
+  // proxies raw request streams, and mutating request.body breaks
+  // @fastify/http-proxy forwarding of bodyless POSTs. Body-reading
+  // services normalize in their own app.ts.
   httpMetricsHooks(app);
   registerErrorHandler(app);
   registerTracingHooks(app);

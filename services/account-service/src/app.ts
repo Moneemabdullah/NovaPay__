@@ -18,6 +18,18 @@ export async function buildApp() {
   });
   await app.register(helmet);
   await requestIdPlugin(app);
+  // Normalize missing bodies so route destructuring never throws: every
+  // route validates the (possibly empty) object and returns its own 400.
+  app.addHook("preValidation", (request, _reply, done) => {
+    if (
+      (request.method === "POST" ||
+        request.method === "PUT" ||
+        request.method === "PATCH") &&
+      request.body === undefined
+    )
+      request.body = {};
+    done();
+  });
   registerServiceAuth(
     app,
     () => ({
