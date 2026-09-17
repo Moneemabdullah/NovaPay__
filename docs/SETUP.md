@@ -452,6 +452,27 @@ cd services/transaction-service && docker build -t transaction-service:$(node -p
 make build
 ```
 
+### Load Testing
+
+Zero-dependency script (`scripts/load/load-test.mjs`, Node 20+).
+Defaults are a safe read-only baseline; writes need `WRITE=1` and
+isolated `loadtest-` idempotency keys:
+
+```bash
+# Baseline: 20 rps GET for 30s
+make load-test
+# Heavier read load
+make load-test URL=http://localhost:8080/docs/json RATE=100 DURATION=30
+# Business path (synthetic wallets only, deterministic keys)
+WRITE=1 make load-test METHOD=POST URL=http://localhost:8080/transactions \
+  BODY='{"senderWalletId":"...","recipientWalletId":"...","amountCents":100,"currency":"USD"}' \
+  IDEMPOTENCY_PREFIX=loadtest- RATE=5 DURATION=60
+```
+
+Measured on this stack: 100 rps reads at p95 ~34 ms with 0% errors;
+5 rps full transfers at p50 ~267 ms / p95 ~721 ms with 0% errors
+(300/300 completed, sender balance exact to the cent).
+
 ## 10b. CI Pipeline
 
 `.github/workflows/ci.yml` runs on pushes and PRs targeting `main`. The single
@@ -602,6 +623,7 @@ JSON line and is filtered at query time.
 | `make security-audit` | `npm audit` at high+ severity (report-only, never fails) |
 | `make check` | Full local gate: typecheck + lint + unit + integration tests |
 | `make lint` | Run the linter in every service |
+| `make load-test` | Safe baseline load test (override URL/RATE/DURATION) |
 | `make migrate` | Apply Prisma migrations |
 | `make generate` | Generate Prisma clients |
 
