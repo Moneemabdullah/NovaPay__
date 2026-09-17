@@ -23,11 +23,20 @@ Envelope encryption (AES-256-GCM throughout) in
 
 ### Data Flow
 
-```
-POST /users ──▶ envelope(fullName, phone) ──▶ users row ──▶ 201 {id, email, createdAt}
-   (plaintext          (ciphertext + IVs + tags                (PII never
-    in, never           + wrapped DEK persisted)                 returned)
-    stored)
+```mermaid
+flowchart LR
+    Req["POST /users<br/>plaintext in, never stored"]
+    Env["envelope()<br/>ciphertext + IVs + tags"]
+    Row["users row<br/>wrapped DEK persisted"]
+    Res["201<br/>id, email, createdAt"]
+
+    Req --> Env --> Row --> Res
+
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef database fill:#ffffff,stroke:#d97706,stroke-width:2px,color:#111827
+
+    class Req,Env,Res service
+    class Row database
 ```
 
 `createUser` (`wallet.service.ts`) persists `fullNameEnc/Iv/Tag`,

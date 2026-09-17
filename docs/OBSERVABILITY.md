@@ -26,33 +26,52 @@ Pino/`createLogger()` remains the only logging library.
 
 ## Architecture
 
-```
-                    NovaPay
-                       |
-          +------------+------------+
-          |            |            |
-       Metrics       Traces        Logs
-          |            |            |
-     Prometheus      Jaeger       Alloy
-          |            |            |
-          |            |          Loki
-          +------------+------------+
-                       |
-                    Grafana
+```mermaid
+flowchart TB
+    NovaPay["NovaPay"]
+    Metrics["Metrics"]
+    Traces["Traces"]
+    Logs["Logs"]
+    Prom["Prometheus"]
+    Jaeger["Jaeger"]
+    Alloy["Alloy"]
+    Loki["Loki"]
+    Grafana["Grafana"]
+
+    NovaPay --> Metrics & Traces & Logs
+    Metrics --> Prom --> Grafana
+    Traces --> Jaeger --> Grafana
+    Logs --> Alloy --> Loki --> Grafana
+
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class NovaPay,Metrics,Traces,Logs service
+    class Prom,Jaeger,Alloy,Loki,Grafana observability
 ```
 
 ## Logging Flow
 
-```
-Fastify/Pino
-    ↓  structured JSON to stdout (no log files)
-Docker (json-file driver)
-    ↓  stdout/stderr per container
-Alloy (docker discovery, project-scoped)
-    ↓  push over http://loki:3100
-Loki (TSDB, 7-day retention)
-    ↓
-Grafana (Loki datasource, Explore)
+```mermaid
+flowchart LR
+    Pino["Fastify / Pino<br/><small>Structured JSON logs</small>"]
+    Docker["Docker<br/><small>stdout / stderr</small>"]
+    Alloy["Grafana Alloy<br/><small>Log collection & forwarding</small>"]
+    Loki["Loki<br/><small>TSDB · 7-day retention</small>"]
+    Grafana["Grafana<br/><small>Log visualization</small>"]
+
+    Pino -->|JSON logs| Docker
+    Docker -->|stdout / stderr| Alloy
+    Alloy -->|HTTP :3100<br/>project-scoped| Loki
+    Loki -->|Log queries| Grafana
+
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class Pino service
+    class Docker,Alloy,Loki,Grafana observability
+
+    linkStyle default stroke:#64748b,stroke-width:2px
 ```
 
 ## Label Strategy

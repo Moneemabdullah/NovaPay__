@@ -19,11 +19,27 @@ correctly on stale reads and the combination invents funds.
 
 ## Current Architecture
 
-```
-Client → Gateway → Transaction Service (initiate → execute)
-                                          ├─▶ Account Service (debit/credit/reversal, op-key idempotent)
-                                          └─▶ Ledger Service (batches, tx-keyed replay)
-Recovery scheduler (60s tick) ──▶ same execute()
+```mermaid
+flowchart LR
+    Client["Client"]
+    Gateway["Gateway"]
+    Txn["Transaction Service<br/>initiate → execute"]
+    Account["Account Service<br/>debit / credit / reversal"]
+    Ledger["Ledger Service<br/>batches"]
+    Sched["Recovery scheduler<br/>60s tick"]
+
+    Client --> Gateway --> Txn
+    Txn --> Account
+    Txn --> Ledger
+    Sched --> Txn
+
+    classDef edge fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#111827
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef async fill:#ffffff,stroke:#7c3aed,stroke-width:2px,color:#111827
+
+    class Client,Gateway edge
+    class Txn,Account,Ledger service
+    class Sched async
 ```
 
 ## Transaction State Machine

@@ -15,12 +15,22 @@ recovery machinery then finishes the job safely.
 
 ## Architecture
 
-```
-caller ──fetch (+15s timeout)──▶ downstream
-   │                                │
-   ├─ 4xx/5xx/connection-refused → throw (existing handling)
-   └─ timeout → AbortError → throw (existing handling: reversal,
-      BullMQ attempts, scheduler recovery)
+```mermaid
+flowchart LR
+    Caller["Caller<br/>fetch + 15s timeout"]
+    Downstream["Downstream"]
+    Throw["Throw<br/>existing handling"]
+    Recover["Reversal / attempts<br/>scheduler recovery"]
+
+    Caller --> Downstream
+    Downstream -->|4xx · 5xx · refused| Throw
+    Downstream -->|timeout → AbortError| Recover
+
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class Caller,Downstream service
+    class Throw,Recover observability
 ```
 
 No automatic retries anywhere in the HTTP layer.

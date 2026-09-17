@@ -42,14 +42,29 @@ layer is stricter and returns a more specific error than the outer one.
 
 ## New Request Flow
 
-```
-                        ┌── > 10 MB ──────────────▶ 413 from nginx
-                        │
-client ──POST /jobs──▶ nginx ── ≤ 10 MB ──▶ api-gateway ──▶ payroll-service
-                                                                      │
-                                              ┌── > 5000 items ──▶ 400 VALIDATION_ERROR
-                                              │
-                                              └── ≤ 5000 items ──▶ 202 queued
+```mermaid
+flowchart TD
+    Client["Client<br/>POST /jobs"]
+    Nginx["nginx"]
+    Gateway["api-gateway"]
+    Payroll["payroll-service"]
+    R413["413<br/>from nginx"]
+    R400["400<br/>VALIDATION_ERROR"]
+    R202["202<br/>queued"]
+
+    Client --> Nginx
+    Nginx -->|> 10 MB| R413
+    Nginx -->|≤ 10 MB| Gateway --> Payroll
+    Payroll -->|> 5000 items| R400
+    Payroll -->|≤ 5000 items| R202
+
+    classDef edge fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#111827
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class Client,Gateway edge
+    class Nginx,Payroll service
+    class R413,R400,R202 observability
 ```
 
 ## Chosen Limit and Why

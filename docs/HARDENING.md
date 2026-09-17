@@ -79,45 +79,64 @@ Three confirmed review findings, each fixed minimally:
 
 Logger wiring (all 7 services, before → after):
 
-```
-Fastify({ logger: true })            Fastify({ logger: { level, redact } })
-request/error logs unredacted   ──▶  same single stdout stream, now redacted
-createLogger unused                   createLogger("server") boot line
+```mermaid
+flowchart LR
+    Before["Before<br/>unredacted logs<br/>createLogger unused"]
+    After["After<br/>redacted stdout<br/>server boot line"]
+
+    Before --> After
+
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class Before,After observability
 ```
 
 Ledger audit (before → after):
 
-```
-Database                                Database
-   |                                       |
-   +-- findMany(ALL) ──▶ OOM risk           +--> batch 1 (id > 0, take 1000)
-                                           +--> batch 2 (id > last, take 1000)
-                                           +--> ...
-                                           +--> final partial batch
+```mermaid
+flowchart TB
+    DB[("Database")]
+    All["findMany(ALL)<br/>OOM risk"]
+    B1["batch 1<br/>take 1000"]
+    B2["batch 2<br/>id > last"]
+    BN["final partial batch"]
+
+    DB --> All
+    DB --> B1 --> B2 --> BN
+
+    classDef database fill:#ffffff,stroke:#d97706,stroke-width:2px,color:#111827
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class DB,B1,B2,BN database
+    class All observability
 ```
 
 Transaction recovery (before → after):
 
-```
-Manual operator                    Transaction Service
-POST /internal/recover                   |
-       |                                 v
-       v                           Recovery Scheduler (60s)
-Find stale PROCESSING                   |
-       |                                 v
-execute() each                    Find stale PROCESSING
-(no mutual exclusion)                    |
-                                         v
-                                   Acquire ownership
-                                   (SET NX PX + token)
-                                         |
-                                         v
-                                   Recover transaction
-                                   (existing execute)
-                                         |
-                                         v
-                                   Release (Lua) / renew
-                                   on heartbeat
+```mermaid
+flowchart LR
+    Manual["Manual Operator<br/>POST /internal/recover"]
+    FindOld["Find Stale<br/>PROCESSING"]
+    ExecOld["execute()<br/>No Mutual Exclusion"]
+
+    Svc["Transaction<br/>Service"]
+    Sched["Recovery Scheduler<br/>60s Tick"]
+    FindNew["Find Stale<br/>PROCESSING"]
+    Lock["Acquire Ownership<br/>SET NX PX + Token"]
+    Recover["Recover Transaction<br/>Existing execute()"]
+    Release["Release Lock (Lua)<br/>Renew on Heartbeat"]
+
+    Manual --> FindOld --> ExecOld
+
+    Svc --> Sched --> FindNew --> Lock --> Recover --> Release
+
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef async fill:#ffffff,stroke:#7c3aed,stroke-width:2px,color:#111827
+
+    class Manual,FindOld,ExecOld,Svc,FindNew,Recover,Release service
+    class Sched,Lock async
+
+    linkStyle default stroke:#64748b,stroke-width:2px
 ```
 
 ## Why the Previous Implementation Was Insufficient
