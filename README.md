@@ -8,51 +8,32 @@ Clients talk to the API gateway (via nginx) which routes to domain services. Eac
 
 ## Architecture
 
-```
-                          ┌──────────────────────┐
-                          │        CLIENT        │
-                          └──────────┬───────────┘
-                                     │
-                                     │ :8080
-                                     ▼
-                          ┌──────────────────────┐
-                          │     API GATEWAY      │
-                          │       :3000          │
-                          └──────────┬───────────┘
-                                     │
-           ┌─────────────┬───────────┼───────────┬─────────────┬─────────────┐
-           │             │           │           │             │             │
-           ▼             ▼           ▼           ▼             ▼             ▼
-    ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌───────────┐
-    │  ACCOUNT   │ │ TRANSACTION│ │  LEDGER  │ │    FX    │ │  PAYROLL   │ │   ADMIN   │
-    │   :3001    │ │   :3002    │ │  :3003   │ │  :3004   │ │   :3005    │ │  :3006    │
-    └─────┬──────┘ └─────┬──────┘ └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬─────┘
-          │              │             │            │             │              │
-          ▼              ▼             ▼            ▼             ▼              ▼
-    ┌───────────┐  ┌───────────┐ ┌──────────┐  ┌──────────┐ ┌───────────┐ ┌──────────┐
-    │ Account DB│  │Transaction│ │ Ledger DB│  │   FX DB  │ │ Payroll DB│ │ Admin DB │
-    │ PostgreSQL│  │    DB     │ │PostgreSQL│  │PostgreSQL│ │ PostgreSQL│ │PostgreSQL│
-    │           │  │ PostgreSQL│ └──────────┘  └──────────┘ └───────────┘ └──────────┘
-    └───────────┘  └───────────┘
-
-                   ───────── ASYNCHRONOUS PAYROLL ─────────
-
-┌───────────────┐    ┌───────────────┐    ┌─────────────────┐    ┌────────────────┐
-│ Payroll :3005 │───▶│ Redis :6379   │───▶│ Worker          │───▶│ Transaction    │
-│               │    │ BullMQ shared │    │ concurrency: 5  │    │ :3002          │
-└───────────────┘    │ queue + per-  │    │ + per-employer  │    └────────────────┘
-                     │ employer lock │    │ lease lock      │
-                     └───────────────┘    └─────────────────┘
-
-                   ───────── OBSERVABILITY ─────────
-
-          ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-          │ Prometheus   │────▶│   Grafana    │◀────│    Loki      │
-          │    :9090     │     │    :3007     │     │  (internal)  │
-          └──────────────┘     └──────────────┘     └──────▲───────┘
-                 ▲                     ▲                   │
-                 │                     │                Alloy ◀── Docker stdout
-          services :3000-3006    Jaeger :16686 ←── OTLP :4317── services
+```mermaid
+flowchart TB
+    Client --> Nginx["Nginx :8080"]
+    Nginx --> GW["API Gateway :3000"]
+    GW --> Account["Account :3001"]
+    GW --> Txn["Transaction :3002"]
+    GW --> Ledger["Ledger :3003"]
+    GW --> FX["FX :3004"]
+    GW --> Payroll["Payroll :3005"]
+    GW --> Admin["Admin :3006"]
+    Account --> AccountDB[("Account DB")]
+    Txn --> TxnDB[("Transaction DB")]
+    Ledger --> LedgerDB[("Ledger DB")]
+    FX --> FXDB[("FX DB")]
+    Payroll --> PayrollDB[("Payroll DB")]
+    Admin --> AdminDB[("Admin DB")]
+    Payroll --> Redis[("Redis :6379\nBullMQ + leases")]
+    Redis --> Worker["Worker\nconcurrency: 5"]
+    Worker --> Txn
+    Account & Txn & Ledger & FX & Payroll & Admin -.->|OTLP :4317| Jaeger["Jaeger :16686"]
+    Account & Txn & Ledger & FX & Payroll & Admin --> Prom["Prometheus :9090"]
+    Prom --> Grafana["Grafana :3007"]
+    Loki[("Loki\ninternal")] --> Grafana
+    Alloy["Alloy"] --> Loki
+    Docker["Docker stdout"] --> Alloy
+    cAdvisor["cAdvisor"] --> Prom
 ```
 
 No service reads or writes another service's database directly — all cross-service communication is over HTTP, enforced at the infra level by giving each service its own Postgres database (see `scripts/init-multi-db.sh`).
@@ -82,6 +63,58 @@ No service reads or writes another service's database directly — all cross-ser
 | Payroll | Queued batch disbursement with checkpoint resume |
 | Admin | Administrative operations |
 
+## Assessment Requirement Coverage
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Architecture / high-throughput design | Implemented | 7 services, own DBs each; `docs/ARCHITECTURE.md` |
+| Problem 1 — idempotency | Implemented | Scenarios A–E in `decisions.md`; replay tests |
+| Problem 2 — bulk payroll / per-employer concurrency | Implemented | Shared queue + lease locks; `decisions.md` Problem 2 |
+| Problem 3 — FX quote locking | Implemented | Atomic single-use consume; `decisions.md` Problem 3 |
+| Problem 4 — field-level encryption | Implemented | AES-256-GCM envelope, write-only; `decisions.md` Problem 4 |
+| Observability | Implemented | Prometheus/Grafana/Loki/Alloy/Jaeger; `docs/OBSERVABILITY.md` |
+| Ledger invariant alerting | Implemented | `ledger_invariant_violations_total` + Grafana alerts |
+| CI/CD | Implemented | 4 workflows, 5 gate jobs; `make check` |
+| Transaction history | Implemented | Keyset pagination; `docs/TRANSACTION_HISTORY.md` |
+| Crash recovery | Implemented | Scheduler + leases; `docs/HARDENING.md` |
+| Service-to-service auth | Implemented | Per-service tokens; `docs/SERVICE_TO_SERVICE_SECURITY.md` |
+
+## Verified Project Metrics
+
+Measured from the repository and live stack; values evolve with the code:
+
+| Metric | Value |
+|---|---:|
+| Application services | 7 |
+| Business API endpoints | 22 |
+| Internal endpoints | 1 |
+| Test cases | 157 |
+| Unit tests | 135 |
+| Integration tests | 22 |
+| Test files | 43 |
+| PostgreSQL databases | 6 |
+| Prisma models | 11 |
+| CI workflows | 4 |
+| CI gate jobs | 5 |
+| Observability components | 7 |
+| Running containers | 16 |
+
+## Load Testing
+
+Zero-dependency harness at `scripts/load/load-test.mjs` (`make load-test`;
+read-only defaults, `WRITE=1` + isolated keys for writes):
+
+| Scenario | Requests | Rate | Errors | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|---:|---:|
+| Baseline | 600 | 20 rps | 0% | 5 ms | 8.3 ms | 15.1 ms |
+| HTTP load | 3,000 | 100 rps | 0% | 4.7 ms | 33.7 ms | 123.8 ms |
+| Transfers | 300 | 5 rps | 0% | 267 ms | 721 ms | 1,471 ms |
+
+Transfer validation: 300/300 successful, sender balance exactly 970,000
+cents, Prometheus/invariant monitoring healthy throughout. These
+measurements represent the tested live-stack configuration and are not
+a formal maximum-capacity claim. Full record: [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md).
+
 ## Quick Start
 
 ```bash
@@ -100,6 +133,11 @@ make dev-ps        # dev container status
 ```
 
 Full guide (environments, ports, databases, testing, troubleshooting): [docs/SETUP.md](docs/SETUP.md).
+
+For manual API testing, [requests.http](requests.http) provides
+ready-made requests (health checks, wallet creation, idempotent
+transfers with replay scenarios, FX quotes, ledger invariant check)
+for REST-client compatible editors.
 
 ## Documentation
 
@@ -124,6 +162,7 @@ Full guide (environments, ports, databases, testing, troubleshooting): [docs/SET
 ### API
 
 - [docs/API.md](docs/API.md) — endpoint map, auth, pagination, error conventions
+- [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) — harness, safety rules, measured results
 - Swagger UI: [http://localhost:8080/docs](http://localhost:8080/docs) (stack running)
 - OpenAPI JSON: [http://localhost:8080/docs/json](http://localhost:8080/docs/json)
 
@@ -136,6 +175,28 @@ Application → Prometheus → Grafana (metrics/dashboards, :9090/:3007)
 ```
 
 Details: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+
+## Quick Review / Start Here
+
+Suggested 60–120 second path, then deeper as needed:
+
+1. This README (overview, metrics, load results)
+2. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (design)
+3. [decisions.md](decisions.md) (why these choices)
+4. [docs/MONEY_MOVEMENT_CONSISTENCY.md](docs/MONEY_MOVEMENT_CONSISTENCY.md) (correctness core)
+5. [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) (monitoring)
+6. [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) (measured performance)
+7. Remaining specialized docs from the index above
+
+## Engineering Evidence
+
+Verifiable in-repo proof (not claims): idempotency scenarios A–E with
+replay tests; crash-recovery suites asserting balances, batches, and
+statuses; live invariant checks holding delta zero; hash-chain
+verification tests; per-employer serialization tests; atomic FX
+single-consume tests; Prometheus/Grafana dashboards with alert rules;
+Jaeger traces across services; 16-container Docker stacks; gated CI
+(`ci-status` required); load runs above with cent-exact reconciliation.
 
 ## API Documentation
 

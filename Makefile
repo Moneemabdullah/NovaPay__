@@ -6,7 +6,7 @@ DB_SERVICES := account transaction ledger fx payroll admin
 
 .PHONY: help up down logs ps build rebuild migrate generate test init-db \
         typecheck coverage security-audit check lint integration-test \
-        dev-up dev-down dev-logs dev-ps dev-build
+        load-test dev-up dev-down dev-logs dev-ps dev-build
 
 help:
 	@echo "NovaPay — easy-run targets:"
@@ -29,6 +29,7 @@ help:
 	@echo "  make security-audit  	Run npm audit at high+ severity in every service (report-only, never fails)"
 	@echo "  make check      		Run typecheck + lint + unit tests + integration tests (stops on first failure)"
 	@echo "  make lint       		Run the linter in every service"
+	@echo "  make load-test  		Safe baseline load test (read-only GET, override URL/RATE/DURATION)"
 	@echo "  make pre-push 		Run all pre-push checks (unit tests, integration tests, typecheck, lint, security audit)"
 	@echo ""
 	@echo "  Development (fast, no rebuilds):"
@@ -150,6 +151,16 @@ security-audit:
 # Local equivalent of the CI gating pipeline (ci-quality + ci-tests + lint):
 # typecheck + lint + unit tests + integration tests. Stops on first failure.
 check: typecheck lint test integration-test
+
+# Baseline load test: read-only GET against the gateway (safe defaults).
+# Override per run, e.g.:
+#   make load-test URL=http://localhost:8080/docs/json RATE=100 DURATION=30
+#   WRITE=1 make load-test METHOD=POST URL=http://localhost:8080/transactions \
+#     BODY='{"senderWalletId":"...","recipientWalletId":"...","amountCents":100,"currency":"USD"}' \
+#     IDEMPOTENCY_PREFIX=loadtest- RATE=5 DURATION=60
+# Writes require WRITE=1 and isolated `loadtest-` idempotency keys.
+load-test:
+	node scripts/load/load-test.mjs
 
 
 pre-push:
