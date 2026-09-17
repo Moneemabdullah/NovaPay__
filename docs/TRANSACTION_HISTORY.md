@@ -34,21 +34,25 @@ serving a wallet-scoped ordered page.
 
 ## Architecture
 
-```
-Client
-  |
-  v
-API Gateway (/transactions prefix proxy, all methods)
-  |
-  v
-Transaction Service — GET /transactions?walletId&limit&cursor
-  |
-  v
-PostgreSQL
-  |
-  +--> indexed history query (composite index per wallet side)
-        |
-        +--> page (limit + 1 rows, no COUNT(*))
+```mermaid
+flowchart TB
+    Client["Client"]
+    Gateway["API Gateway<br/>/transactions prefix"]
+    Service["Transaction Service<br/>GET /transactions"]
+    Postgres[("PostgreSQL")]
+    Query["Indexed history query<br/>composite index per side"]
+    Page["Page<br/>limit + 1 rows, no COUNT(*)"]
+
+    Client --> Gateway --> Service --> Postgres
+    Postgres --> Query --> Page
+
+    classDef edge fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#111827
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef database fill:#ffffff,stroke:#d97706,stroke-width:2px,color:#111827
+
+    class Client,Gateway edge
+    class Service,Query,Page service
+    class Postgres database
 ```
 
 ## Pagination Design

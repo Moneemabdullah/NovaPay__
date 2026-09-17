@@ -9,31 +9,140 @@ Clients talk to the API gateway (via nginx) which routes to domain services. Eac
 ## Architecture
 
 ```mermaid
-flowchart TB
-    Client --> Nginx["Nginx :8080"]
-    Nginx --> GW["API Gateway :3000"]
-    GW --> Account["Account :3001"]
-    GW --> Txn["Transaction :3002"]
-    GW --> Ledger["Ledger :3003"]
-    GW --> FX["FX :3004"]
-    GW --> Payroll["Payroll :3005"]
-    GW --> Admin["Admin :3006"]
-    Account --> AccountDB[("Account DB")]
-    Txn --> TxnDB[("Transaction DB")]
-    Ledger --> LedgerDB[("Ledger DB")]
-    FX --> FXDB[("FX DB")]
-    Payroll --> PayrollDB[("Payroll DB")]
-    Admin --> AdminDB[("Admin DB")]
-    Payroll --> Redis[("Redis :6379\nBullMQ + leases")]
-    Redis --> Worker["Worker\nconcurrency: 5"]
-    Worker --> Txn
-    Account & Txn & Ledger & FX & Payroll & Admin -.->|OTLP :4317| Jaeger["Jaeger :16686"]
-    Account & Txn & Ledger & FX & Payroll & Admin --> Prom["Prometheus :9090"]
-    Prom --> Grafana["Grafana :3007"]
-    Loki[("Loki\ninternal")] --> Grafana
-    Alloy["Alloy"] --> Loki
-    Docker["Docker stdout"] --> Alloy
-    cAdvisor["cAdvisor"] --> Prom
+flowchart LR
+
+    %% =========================
+    %% REQUEST FLOW
+    %% =========================
+
+    Client["Client"]
+
+    subgraph EDGE["EDGE"]
+        Nginx["Nginx<br/>:8080"]
+        Gateway["API Gateway<br/>:3000"]
+        Nginx --> Gateway
+    end
+
+    Client --> Nginx
+
+
+    subgraph SERVICES["CORE SERVICES"]
+        direction TB
+
+        Account["Account<br/>:3001"]
+        Transaction["Transaction<br/>:3002"]
+        Ledger["Ledger<br/>:3003"]
+        FX["FX / Rates<br/>:3004"]
+        Payroll["Payroll<br/>:3005"]
+        Admin["Admin<br/>:3006"]
+    end
+
+    Gateway --> Account
+    Gateway --> Transaction
+    Gateway --> Ledger
+    Gateway --> FX
+    Gateway --> Payroll
+    Gateway --> Admin
+
+
+    %% =========================
+    %% DATABASES
+    %% =========================
+
+    subgraph DATA["DATA"]
+        direction TB
+
+        AccountDB[("Account DB")]
+        TransactionDB[("Transaction DB")]
+        LedgerDB[("Ledger DB")]
+        FXDB[("FX DB")]
+        PayrollDB[("Payroll DB")]
+        AdminDB[("Admin DB")]
+    end
+
+    Account --> AccountDB
+    Transaction --> TransactionDB
+    Ledger --> LedgerDB
+    FX --> FXDB
+    Payroll --> PayrollDB
+    Admin --> AdminDB
+
+
+    %% =========================
+    %% PAYROLL
+    %% =========================
+
+    subgraph ASYNC["PAYROLL"]
+        Redis[("Redis<br/>BullMQ + Leases")]
+        Worker["Worker<br/>Concurrency 5"]
+
+        Redis --> Worker
+    end
+
+    Payroll --> Redis
+    Worker --> Transaction
+
+
+    %% =========================
+    %% OBSERVABILITY
+    %% =========================
+
+    subgraph OBS["OBSERVABILITY"]
+        direction LR
+
+        Metrics["Prometheus<br/>Metrics"]
+        Dashboards["Grafana<br/>Dashboards"]
+
+        Logs["Alloy → Loki<br/>Logs"]
+        Tracing["Jaeger<br/>Tracing"]
+
+        Containers["cAdvisor<br/>Containers"]
+
+        Metrics --> Dashboards
+        Logs --> Dashboards
+        Containers --> Metrics
+    end
+
+    Account -.->|metrics| Metrics
+    Transaction -.->|metrics| Metrics
+    Ledger -.->|metrics| Metrics
+    FX -.->|metrics| Metrics
+    Payroll -.->|metrics| Metrics
+    Admin -.->|metrics| Metrics
+
+    Account -.->|OTLP| Tracing
+    Transaction -.->|OTLP| Tracing
+    Ledger -.->|OTLP| Tracing
+    FX -.->|OTLP| Tracing
+    Payroll -.->|OTLP| Tracing
+    Admin -.->|OTLP| Tracing
+
+
+    %% =========================
+    %% STYLES
+    %% =========================
+
+    classDef client fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+    classDef edge fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#111827
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef database fill:#ffffff,stroke:#d97706,stroke-width:2px,color:#111827
+    classDef async fill:#ffffff,stroke:#7c3aed,stroke-width:2px,color:#111827
+    classDef observability fill:#ffffff,stroke:#64748b,stroke-width:2px,color:#111827
+
+    class Client client
+    class Nginx,Gateway edge
+    class Account,Transaction,Ledger,FX,Payroll,Admin service
+    class AccountDB,TransactionDB,LedgerDB,FXDB,PayrollDB,AdminDB database
+    class Redis,Worker async
+    class Metrics,Dashboards,Logs,Tracing,Containers observability
+
+
+    %% Remove heavy cluster backgrounds
+    style EDGE fill:transparent,stroke:#2563eb,stroke-width:1px
+    style SERVICES fill:transparent,stroke:#16a34a,stroke-width:1px
+    style DATA fill:transparent,stroke:#d97706,stroke-width:1px
+    style ASYNC fill:transparent,stroke:#7c3aed,stroke-width:1px
+    style OBS fill:transparent,stroke:#64748b,stroke-width:1px
 ```
 
 No service reads or writes another service's database directly — all cross-service communication is over HTTP, enforced at the infra level by giving each service its own Postgres database (see `scripts/init-multi-db.sh`).

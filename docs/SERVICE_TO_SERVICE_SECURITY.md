@@ -19,11 +19,26 @@ and impersonate any other service without detection.
 
 ## Architecture
 
-```
-gateway ──x-service-id/token──▶ account, ledger, transaction, fx, payroll, admin
-transaction ──x-service-id/token──▶ account (ops), ledger (batches), fx (consume)
-payroll ──x-service-id/token──▶ transaction (POST /transactions only)
-admin ──x-service-id/token──▶ ledger (reads only)
+```mermaid
+flowchart LR
+    Gateway["Gateway"]
+    Txn["Transaction"]
+    Payroll["Payroll"]
+    Admin["Admin"]
+    Account["Account"]
+    Ledger["Ledger"]
+    FX["FX"]
+
+    Gateway --> Account & Ledger & Txn & FX & Payroll & Admin
+    Txn --> Account & Ledger & FX
+    Payroll -->|POST /transactions| Txn
+    Admin -->|reads| Ledger
+
+    classDef edge fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#111827
+    classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
+
+    class Gateway edge
+    class Txn,Payroll,Admin,Account,Ledger,FX service
 ```
 
 ## Service Identity
