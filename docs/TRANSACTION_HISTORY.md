@@ -35,16 +35,15 @@ serving a wallet-scoped ordered page.
 ## Architecture
 
 ```mermaid
-flowchart TB
+flowchart LR
     Client["Client"]
     Gateway["API Gateway<br/>/transactions prefix"]
     Service["Transaction Service<br/>GET /transactions"]
     Postgres[("PostgreSQL")]
-    Query["Indexed history query<br/>composite index per side"]
-    Page["Page<br/>limit + 1 rows, no COUNT(*)"]
+    Query["Indexed History Query<br/>Composite Index per Side"]
+    Page["Pagination<br/>limit + 1 · No COUNT(*)"]
 
-    Client --> Gateway --> Service --> Postgres
-    Postgres --> Query --> Page
+    Client --> Gateway --> Service --> Postgres --> Query --> Page
 
     classDef edge fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#111827
     classDef service fill:#ffffff,stroke:#16a34a,stroke-width:2px,color:#111827
@@ -53,6 +52,8 @@ flowchart TB
     class Client,Gateway edge
     class Service,Query,Page service
     class Postgres database
+
+    linkStyle default stroke:#64748b,stroke-width:2px
 ```
 
 ## Pagination Design
