@@ -215,6 +215,20 @@ services:
       timeout: 5s
       retries: 10
 
+  # ── Database inspection (local dev only) ──────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:9
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@novapay.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-novapay-local-dev-only-change-me}
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   alloy:
     image: grafana/alloy:v1.5.1
     command: run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
@@ -230,3 +244,4 @@ services:
 volumes:
   pgdata:
   loki-data:
+  pgadmin-data:

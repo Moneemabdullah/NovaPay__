@@ -270,6 +270,7 @@ docker compose -f infra/docker-compose.yml up --build -d
 | cAdvisor | [http://localhost:8081](http://localhost:8081) | 8080 | Container resource metrics |
 | PostgreSQL | `localhost:5432` | 5432 | Database (user: `novapay`, password: `novapay`) |
 | Redis | `localhost:6379` | 6379 | Queue backend for payroll-service |
+| pgAdmin | [http://localhost:5050](http://localhost:5050) | 80 | Visual database inspection (dev only) |
 
 ### Stop
 
@@ -286,6 +287,28 @@ make logs
 # or
 docker compose -f infra/docker-compose.yml logs -f
 ```
+
+## pgAdmin
+
+pgAdmin (local inspection only) runs in the production stack:
+
+1. Start the stack: `make up` (or `docker compose -f infra/docker-compose.yml up -d`).
+2. Open [http://localhost:5050](http://localhost:5050).
+3. Log in with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_PASSWORD`
+   (dev defaults: `admin@novapay.dev` / `novapay-local-dev-only-change-me`;
+   override via environment — see `.env.example`).
+4. Register one server ("NovaPay PostgreSQL"): host `postgres`, port
+   `5432`, user `novapay`, password `novapay`, check *Save password*.
+   (Host `postgres` is the Docker service name — never `localhost`,
+   which inside the container means pgAdmin itself.)
+5. Opening that server exposes all six logical databases:
+   `account_db`, `transaction_db`, `ledger_db`, `fx_db`, `payroll_db`,
+   `admin_db`.
+
+Notes: pgAdmin starts after healthy PostgreSQL automatically; its
+settings persist in the `pgadmin-data` volume across restarts. It is
+intentionally absent from the dev compose — point a second manual
+registration at that stack's Postgres if needed.
 
 ---
 
